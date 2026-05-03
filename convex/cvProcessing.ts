@@ -152,6 +152,15 @@ export const processCv = action({
   },
 });
 
+type SearchInterpretation = {
+  searchText: string;
+  industry?: string;
+  seniority?: string;
+  minYears?: number;
+  interpretation: string; // Human-readable explanation of what AI understood
+  keywords: string[];
+};
+
 export const aiSearch = action({
   args: {
     query: v.string(),
@@ -159,51 +168,119 @@ export const aiSearch = action({
     seniority: v.optional(v.string()),
     limit: v.optional(v.number()),
   },
-  handler: async (ctx, args): Promise<{ cvId: string; score: number; reason: string }[]> => {
-    // First expand/interpret the query with AI
+  handler: async (
+    ctx,
+    args
+  ): Promise<{
+    interpretation: SearchInterpretation;
+    results: { cvId: string; score: number; reason: string }[];
+  }> => {
+    // Step 1: AI interprets the query
     const interpretResponse = await openai.chat.completions.create({
       model: "openai/gpt-5-mini",
       messages: [
         {
           role: "system",
-          content: `You are a CV search assistant. Convert the user's natural language search query into key search terms for finding matching CVs.
-Return JSON: { "keywords": ["term1","term2",...], "searchText": "optimized search string", "industry": "industry filter or null", "seniority": "seniority filter or null", "minYears": number or null }`,
+          content: `You are a talent search assistant. Interpret the user's natural language search query for CV/resume matching.
+Return JSON with these fields:
+{
+  "searchText": "optimized search string combining key skills, titles, industries",
+  "industry": "one of: Technology, Finance, Healthcare, FMCG, Retail, Manufacturing, Energy, Education, Consulting, Marketing, Legal, Real Estate, Hospitality, Media, Logistics — or null",
+  "seniority": "one of: junior, mid, senior, lead, executive — or null",
+  "minYears": number or null,
+  "interpretation": "one sentence describing what you are searching for e.g. 'Searching for senior FMCG professionals with supply chain experience and 5+ years'",
+  "keywords": ["key1", "key2", "key3"]
+}`,
         },
         { role: "user", content: args.query },
       ],
       response_format: { type: "json_object" },
     });
 
-    let searchTerms: { searchText: string; industry?: string; seniority?: string } = {
+    let interp: SearchInterpretation = {
       searchText: args.query,
+      interpretation: `Searching for: "${args.query}"`,
+      keywords: [],
     };
     try {
-      const parsed = JSON.parse(interpretResponse.choices[0]?.message?.content ?? "{}") as {
-        searchText?: string;
-        industry?: string;
-        seniority?: string;
-      };
-      searchTerms = {
+      const parsed = JSON.parse(
+        interpretResponse.choices[0]?.message?.content ?? "{}"
+      ) as Partial<SearchInterpretation>;
+      interp = {
         searchText: parsed.searchText ?? args.query,
-        industry: args.industry ?? parsed.industry,
-        seniority: args.seniority ?? parsed.seniority,
+        industry: args.industry ?? (parsed.industry ?? undefined),
+        seniority: args.seniority ?? (parsed.seniority ?? undefined),
+        minYears: parsed.minYears ?? undefined,
+        interpretation: parsed.interpretation ?? `Searching for: "${args.query}"`,
+        keywords: parsed.keywords ?? [],
       };
     } catch {
-      // use original query
+      // keep defaults
     }
 
-    // Run search
-    const results = await ctx.runQuery(api.cvs.searchCvs, {
-      query: searchTerms.searchText,
-      industry: searchTerms.industry,
-      seniority: searchTerms.seniority,
-      limit: args.limit ?? 20,
+    // Step 2: Run the text search
+    const rawResults = await ctx.runQuery(api.cvs.searchCvs, {
+      query: interp.searchText,
+      industry: interp.industry,
+      seniority: interp.seniority,
+      limit: (args.limit ?? 20) * 2, // fetch extra to allow re-ranking
     });
 
-    return results.map((cv) => ({
-      cvId: cv._id,
-      score: 1.0,
-      reason: cv.summary ?? "",
+    if (rawResults.length === 0) {
+      return { interpretation: interp, results: [] };
+    }
+
+    // Step 3: AI re-ranks results and provides per-candidate relevance reasons
+    const candidateSummaries = rawResults.slice(0, 30).map((cv, i) => ({
+      index: i,
+      name: cv.candidateName ?? cv.fileName,
+      title: cv.currentTitle ?? "",
+      industry: cv.industry ?? "",
+      seniority: cv.seniority ?? "",
+      years: cv.yearsOfExperience ?? null,
+      location: cv.location ?? "",
+      skills: (cv.skills ?? []).slice(0, 10).join(", "),
+      summary: cv.summary ?? "",
     }));
+
+    const rankResponse = await openai.chat.completions.create({
+      model: "openai/gpt-5-mini",
+      messages: [
+        {
+          role: "system",
+          content: `You are a talent matching expert. Given a search query and a list of candidates, rank the most relevant ones and provide a short reason why each matches.
+Return JSON: { "ranked": [ { "index": number, "score": 0-100, "reason": "1 sentence why this candidate matches" }, ... ] }
+Include only candidates with score > 30. Sort by score descending. Max 20 results.`,
+        },
+        {
+          role: "user",
+          content: `Search query: "${args.query}"\n\nCandidates:\n${JSON.stringify(candidateSummaries, null, 2)}`,
+        },
+      ],
+      response_format: { type: "json_object" },
+    });
+
+    type RankItem = { index: number; score: number; reason: string };
+    let ranked: RankItem[] = [];
+    try {
+      const parsed = JSON.parse(
+        rankResponse.choices[0]?.message?.content ?? "{}"
+      ) as { ranked?: RankItem[] };
+      ranked = parsed.ranked ?? [];
+    } catch {
+      // fallback: return all with default score
+      ranked = rawResults.map((_, i) => ({ index: i, score: 70, reason: rawResults[i]?.summary ?? "" }));
+    }
+
+    const results = ranked
+      .filter((r) => r.index >= 0 && r.index < rawResults.length)
+      .slice(0, args.limit ?? 20)
+      .map((r) => ({
+        cvId: rawResults[r.index]!._id,
+        score: r.score,
+        reason: r.reason,
+      }));
+
+    return { interpretation: interp, results };
   },
 });
