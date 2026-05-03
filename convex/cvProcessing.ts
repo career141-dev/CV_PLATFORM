@@ -11,12 +11,19 @@ const openai = new OpenAI({
 });
 
 async function extractTextFromPdf(buffer: ArrayBuffer): Promise<string> {
-  // pdf-parse v2 ESM — call the module directly
-  type PdfParseFn = (buf: Buffer) => Promise<{ text: string }>;
-  const mod = await import("pdf-parse") as unknown as { default?: PdfParseFn } & PdfParseFn;
-  const pdfParse: PdfParseFn = mod.default ?? (mod as unknown as PdfParseFn);
-  const data = await pdfParse(Buffer.from(buffer));
-  return data.text;
+  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
+  const pdf = await loadingTask.promise;
+  const textParts: string[] = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items
+      .map((item) => ("str" in item ? item.str : ""))
+      .join(" ");
+    textParts.push(pageText);
+  }
+  return textParts.join("\n");
 }
 
 async function extractTextFromDocx(buffer: ArrayBuffer): Promise<string> {
