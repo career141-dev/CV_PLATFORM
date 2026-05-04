@@ -13,8 +13,9 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   Briefcase, MapPin, User, Loader2, Sparkles,
   CheckCircle2, XCircle, ChevronRight, Target,
-  GraduationCap, Clock, Building2, X, Trash2,
+  GraduationCap, Clock, Building2, X, Trash2, PlusCircle,
 } from "lucide-react";
+import AddToJobDialog from "@/components/add-to-job-dialog.tsx";
 import type { Id } from "@/convex/_generated/dataModel.js";
 import { cn } from "@/lib/utils.ts";
 import { formatDistanceToNow } from "date-fns";
@@ -105,6 +106,7 @@ function ScoreRing({ score }: { score: number }) {
 
 function MatchCard({ match, index }: { match: CandidateMatch; index: number }) {
   const [expanded, setExpanded] = useState(false);
+  const [addJobOpen, setAddJobOpen] = useState(false);
   const cv = useQuery(api.cvs.getCv, { cvId: match.cvId as Id<"cvs"> });
 
   return (
@@ -139,8 +141,15 @@ function MatchCard({ match, index }: { match: CandidateMatch; index: number }) {
                     <Badge variant="outline" className="text-xs">{cv.industry}</Badge>
                   )}
                 </div>
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-2 shrink-0">
                   <ScoreRing score={match.overallScore} />
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setAddJobOpen(true); }}
+                    className="text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+                    title="Add to job"
+                  >
+                    <PlusCircle className="w-4 h-4" />
+                  </button>
                   <ChevronRight
                     className={cn(
                       "w-3.5 h-3.5 text-muted-foreground transition-transform",
@@ -237,6 +246,14 @@ function MatchCard({ match, index }: { match: CandidateMatch; index: number }) {
             )}
           </AnimatePresence>
         </>
+      )}
+      {cv && (
+        <AddToJobDialog
+          cvId={match.cvId as Id<"cvs">}
+          candidateName={cv.candidateName}
+          open={addJobOpen}
+          onOpenChange={setAddJobOpen}
+        />
       )}
     </motion.div>
   );

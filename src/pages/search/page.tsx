@@ -15,8 +15,9 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   Search, Sparkles, Briefcase, MapPin,
   ChevronRight, User, Loader2, X,
-  Hash, Clock, Trash2,
+  Hash, Clock, Trash2, PlusCircle,
 } from "lucide-react";
+import AddToJobDialog from "@/components/add-to-job-dialog.tsx";
 import type { Id } from "@/convex/_generated/dataModel.js";
 import { cn } from "@/lib/utils.ts";
 import { formatDistanceToNow } from "date-fns";
@@ -84,6 +85,7 @@ function CvResultCard({ cvId, score, reason, index }: {
   cvId: Id<"cvs">; score: number; reason: string; index: number;
 }) {
   const cv = useQuery(api.cvs.getCv, { cvId });
+  const [addJobOpen, setAddJobOpen] = useState(false);
 
   return (
     <motion.div
@@ -94,8 +96,8 @@ function CvResultCard({ cvId, score, reason, index }: {
       {!cv ? (
         <Skeleton className="h-24 rounded-xl" />
       ) : (
-        <Link to={`/cv/${cvId}`}>
-          <div className="bg-card border rounded-xl p-4 hover:shadow-md hover:border-primary/30 transition-all cursor-pointer group">
+        <>
+          <div className="bg-card border rounded-xl p-4 hover:shadow-md hover:border-primary/30 transition-all group">
             <div className="flex items-start gap-3">
               <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center text-xs font-bold text-muted-foreground shrink-0 mt-0.5">
                 {index + 1}
@@ -105,7 +107,7 @@ function CvResultCard({ cvId, score, reason, index }: {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between gap-2 mb-1">
-                  <div className="flex items-center gap-2 flex-wrap">
+                  <Link to={`/cv/${cvId}`} className="flex items-center gap-2 flex-wrap hover:underline cursor-pointer">
                     <h3 className="font-semibold text-sm">{cv.candidateName ?? cv.fileName}</h3>
                     {cv.seniority && (
                       <Badge variant="secondary" className="text-xs capitalize">{cv.seniority}</Badge>
@@ -113,10 +115,19 @@ function CvResultCard({ cvId, score, reason, index }: {
                     {cv.industry && (
                       <Badge variant="outline" className="text-xs">{cv.industry}</Badge>
                     )}
-                  </div>
+                  </Link>
                   <div className="flex items-center gap-2 shrink-0">
                     <ScoreDot score={score} />
-                    <ChevronRight className="w-3.5 h-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setAddJobOpen(true); }}
+                      className="text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+                      title="Add to job"
+                    >
+                      <PlusCircle className="w-4 h-4" />
+                    </button>
+                    <Link to={`/cv/${cvId}`}>
+                      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
+                    </Link>
                   </div>
                 </div>
                 {cv.currentTitle && (
@@ -150,7 +161,13 @@ function CvResultCard({ cvId, score, reason, index }: {
               </div>
             </div>
           </div>
-        </Link>
+          <AddToJobDialog
+            cvId={cvId}
+            candidateName={cv.candidateName}
+            open={addJobOpen}
+            onOpenChange={setAddJobOpen}
+          />
+        </>
       )}
     </motion.div>
   );
