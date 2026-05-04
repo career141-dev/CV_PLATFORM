@@ -215,10 +215,10 @@ function ImportContent() {
                 <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                 <div>
                   <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
-                    {pausedCvs.length} CV{pausedCvs.length !== 1 ? "s" : ""} paused — insufficient AI credits
+                    {pausedCvs.length} CV{pausedCvs.length !== 1 ? "s" : ""} paused — ready to resume
                   </p>
                   <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
-                    These CVs already have their text extracted and will be marked as searchable immediately — no AI credits needed.
+                    These CVs already have their raw text extracted. Click Resume to mark them as searchable — no AI credits required.
                   </p>
                 </div>
               </div>
