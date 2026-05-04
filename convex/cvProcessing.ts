@@ -2,8 +2,10 @@
 
 import { v } from "convex/values";
 import { action } from "./_generated/server";
+import type { ActionCtx } from "./_generated/server";
 import { api } from "./_generated/api";
 import { ConvexError } from "convex/values";
+import type { Id } from "./_generated/dataModel.d.ts";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -245,6 +247,67 @@ export const resumeProcessing = action({
   },
 });
 
+// ─── On-demand structuring helper ─────────────────────────────────────────────
+// Extracts structured fields from raw CV text using AI, saves to DB
+async function structureCv(
+  ctx: ActionCtx,
+  cvId: string,
+  rawText: string
+): Promise<CvStructuredData> {
+  const response = await openai.chat.completions.create({
+    model: "openai/gpt-5-mini",
+    messages: [
+      {
+        role: "system",
+        content: `You are a CV/resume parser. Extract structured information from the CV text and return JSON.
+Return ONLY valid JSON with these fields (omit fields you cannot determine):
+{
+  "candidateName": "string",
+  "email": "string",
+  "phone": "string",
+  "location": "city, country",
+  "currentTitle": "most recent job title",
+  "industry": "one of: Technology, Finance, Healthcare, FMCG, Retail, Manufacturing, Energy, Education, Consulting, Marketing, Legal, Real Estate, Hospitality, Media, Logistics, Other",
+  "sector": "specific sector within industry e.g. Software, Investment Banking, Pharmaceuticals",
+  "seniority": "one of: junior, mid, senior, lead, executive",
+  "yearsOfExperience": number,
+  "skills": ["skill1", "skill2", ...],
+  "languages": ["language1", ...]
+}`,
+      },
+      {
+        role: "user",
+        content: `Parse this CV:\n\n${rawText.slice(0, 8000)}`,
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  const content = response.choices[0]?.message?.content ?? "{}";
+  let structured: CvStructuredData = {};
+  try {
+    structured = JSON.parse(content) as CvStructuredData;
+  } catch { /* keep empty */ }
+
+  // Save structured fields back to DB (fire and forget — don't block search)
+  ctx.runMutation(api.cvs.markStructured, {
+    cvId: cvId as Id<"cvs">,
+    candidateName: structured.candidateName,
+    email: structured.email,
+    phone: structured.phone,
+    location: structured.location,
+    currentTitle: structured.currentTitle,
+    industry: structured.industry,
+    sector: structured.sector,
+    seniority: structured.seniority,
+    yearsOfExperience: structured.yearsOfExperience,
+    skills: structured.skills,
+    languages: structured.languages,
+  }).catch(() => { /* non-critical — search still works */ });
+
+  return structured;
+}
+
 type JobRequirements = {
   title: string;
   requiredSkills: string[];
@@ -385,8 +448,13 @@ Return ONLY valid JSON with these fields (use null if not specified):
       return { jobRequirements: jobReq, matches: [] };
     }
 
-    // Compact candidate payload — summary + 300 chars of raw text (was 1000)
-    // Smaller payload = faster AI response
+    // Structure unstructured CVs in background — fire and forget
+    const unstructuredCandidates = candidates.filter((cv) => !cv.isStructured && cv.rawText);
+    for (const cv of unstructuredCandidates.slice(0, 10)) {
+      structureCv(ctx, cv._id, cv.rawText!).catch(() => {/* non-critical */});
+    }
+
+    // Compact candidate payload — use raw text snippet for unstructured, fields for structured
     const candidateSummaries = candidates.slice(0, 30).map((cv, i) => ({
       index: i,
       name: cv.candidateName ?? cv.fileName,
@@ -396,8 +464,7 @@ Return ONLY valid JSON with these fields (use null if not specified):
       years: cv.yearsOfExperience ?? null,
       location: cv.location ?? "",
       skills: (cv.skills ?? []).slice(0, 8).join(", "),
-      summary: cv.summary ?? "",
-      snippet: (cv.rawText ?? "").slice(0, 300),
+      snippet: (cv.rawText ?? "").slice(0, 500),
     }));
 
     const scoreResponse = await openai.chat.completions.create({
@@ -571,8 +638,18 @@ Return JSON with these fields:
       return { interpretation: interp, results: [] };
     }
 
-    // Compact payload: summary + 300 chars snippet (was 800) = faster AI response
-    const candidateSummaries = rawResults.slice(0, 30).map((cv, i) => ({
+    // For unstructured CVs in the shortlist, structure them in parallel
+    // while we prepare the ranking prompt. This doesn't block search results.
+    const topCandidates = rawResults.slice(0, 30);
+    const unstructured = topCandidates.filter((cv) => !cv.isStructured && cv.rawText);
+
+    // Kick off structuring in background (fire and forget per CV)
+    for (const cv of unstructured.slice(0, 10)) {
+      structureCv(ctx, cv._id, cv.rawText!).catch(() => {/* non-critical */});
+    }
+
+    // Compact payload: use raw text snippet for unstructured CVs, fields for structured ones
+    const candidateSummaries = topCandidates.map((cv, i) => ({
       index: i,
       name: cv.candidateName ?? cv.fileName,
       title: cv.currentTitle ?? "",
@@ -581,8 +658,7 @@ Return JSON with these fields:
       years: cv.yearsOfExperience ?? null,
       location: cv.location ?? "",
       skills: (cv.skills ?? []).slice(0, 8).join(", "),
-      summary: cv.summary ?? "",
-      snippet: (cv.rawText ?? "").slice(0, 300),
+      snippet: (cv.rawText ?? "").slice(0, 500),
     }));
 
     const rankResponse = await openai.chat.completions.create({
@@ -616,10 +692,10 @@ IMPORTANT: Pay close attention to specific company names mentioned in the query.
     }
 
     const results = ranked
-      .filter((r) => r.index >= 0 && r.index < rawResults.length)
+      .filter((r) => r.index >= 0 && r.index < topCandidates.length)
       .slice(0, args.limit ?? 20)
       .map((r) => ({
-        cvId: rawResults[r.index]!._id,
+        cvId: topCandidates[r.index]!._id,
         score: r.score,
         reason: r.reason,
       }));
