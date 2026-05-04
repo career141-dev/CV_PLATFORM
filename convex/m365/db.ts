@@ -2,6 +2,38 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
 
+// ─── OAuth State ──────────────────────────────────────────────────────────────
+
+export const createOAuthState = internalMutation({
+  args: { state: v.string(), userId: v.id("users"), expiresAt: v.string() },
+  handler: async (ctx, args) => {
+    await ctx.db.insert("oauthStates", args);
+  },
+});
+
+export const getOAuthState = internalQuery({
+  args: { state: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("oauthStates")
+      .withIndex("by_state", (q) => q.eq("state", args.state))
+      .first();
+  },
+});
+
+export const deleteOAuthState = internalMutation({
+  args: { state: v.string() },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("oauthStates")
+      .withIndex("by_state", (q) => q.eq("state", args.state))
+      .first();
+    if (row) await ctx.db.delete(row._id);
+  },
+});
+
+// ─── Accounts ─────────────────────────────────────────────────────────────────
+
 export const upsertAccount = internalMutation({
   args: {
     userId: v.id("users"),

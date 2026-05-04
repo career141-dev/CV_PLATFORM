@@ -182,6 +182,13 @@ export default defineSchema({
     .index("by_job_and_cv", ["jobId", "cvId"])
     .index("by_job_and_stage", ["jobId", "stage"]),
 
+  // Temporary OAuth state tokens (TTL ~10 min) to link callback back to userId
+  oauthStates: defineTable({
+    state: v.string(),
+    userId: v.id("users"),
+    expiresAt: v.string(),
+  }).index("by_state", ["state"]),
+
   // M365 connected mailboxes for email CV import
   m365Accounts: defineTable({
     userId: v.id("users"),
