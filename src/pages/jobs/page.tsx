@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import { Authenticated } from "convex/react";
@@ -539,7 +539,11 @@ function JobCard({ job, onSelect }: { job: Job; onSelect: () => void }) {
 
 // ─── Create job dialog ────────────────────────────────────────────────────────
 
-function CreateJobDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+function CreateJobDialog({ open, onClose, onCreated }: {
+  open: boolean;
+  onClose: () => void;
+  onCreated: (jobId: Id<"jobs">, description: string) => void;
+}) {
   const createJob = useMutation(api.jobs.createJob);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -552,14 +556,14 @@ function CreateJobDialog({ open, onClose }: { open: boolean; onClose: () => void
     if (!title.trim() || !description.trim()) { toast.error("Title and description are required"); return; }
     setSaving(true);
     try {
-      await createJob({
+      const jobId = await createJob({
         title: title.trim(), description: description.trim(),
         industry: industry || undefined, seniority: seniority || undefined,
         location: location.trim() || undefined,
       });
-      toast.success("Job created");
       onClose();
       setTitle(""); setDescription(""); setIndustry(""); setSeniority(""); setLocation("");
+      onCreated(jobId, description.trim());
     } catch {
       toast.error("Failed to create job");
     } finally {
@@ -627,16 +631,21 @@ function CreateJobDialog({ open, onClose }: { open: boolean; onClose: () => void
 
 // ─── Job detail view ──────────────────────────────────────────────────────────
 
-function JobDetailView({ job, onBack }: { job: Job; onBack: () => void }) {
+function JobDetailView({ job, onBack, autoMatchDescription }: {
+  job: Job;
+  onBack: () => void;
+  autoMatchDescription?: string | null;
+}) {
   const [isMatching, setIsMatching] = useState(false);
   const [tab, setTab] = useState<"matches" | "pipeline">("matches");
   const matchByJd = useAction(api.cvProcessing.matchByJobDescription);
   const saveMatchResults = useMutation(api.jobs.saveMatchResults);
+  const autoMatchFired = useRef(false);
 
-  const handleMatch = async () => {
+  const handleMatch = async (descriptionOverride?: string) => {
     setIsMatching(true);
     try {
-      const res = await matchByJd({ jobDescription: job.description, limit: 20 });
+      const res = await matchByJd({ jobDescription: descriptionOverride ?? job.description, limit: 20 });
       await saveMatchResults({ jobId: job._id, matchResults: res.matches, jobRequirements: res.jobRequirements });
       toast.success(`Found ${res.matches.length} matching candidates`);
     } catch {
@@ -645,6 +654,15 @@ function JobDetailView({ job, onBack }: { job: Job; onBack: () => void }) {
       setIsMatching(false);
     }
   };
+
+  // Auto-trigger matching when a new job is created
+  useEffect(() => {
+    if (autoMatchDescription && !autoMatchFired.current) {
+      autoMatchFired.current = true;
+      void handleMatch(autoMatchDescription);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoMatchDescription]);
 
   const pipeline = useQuery(api.pipeline.getPipelineForJob, { jobId: job._id });
   const pipelineMap = new Map<string, PipelineEntry>();
@@ -676,7 +694,7 @@ function JobDetailView({ job, onBack }: { job: Job; onBack: () => void }) {
               )}
             </div>
           </div>
-          <Button onClick={handleMatch} disabled={isMatching} className="gap-2 shrink-0">
+          <Button onClick={() => handleMatch()} disabled={isMatching} className="gap-2 shrink-0">
             {isMatching
               ? <><Loader2 className="w-4 h-4 animate-spin" /> Matching...</>
               : <><RefreshCw className="w-4 h-4" /> {job.matchResults ? "Re-match" : "Find Matches"}</>
@@ -762,9 +780,15 @@ function JobDetailView({ job, onBack }: { job: Job; onBack: () => void }) {
 function JobsContent() {
   const jobs = useQuery(api.jobs.listJobs, {});
   const [selectedJobId, setSelectedJobId] = useState<Id<"jobs"> | null>(null);
+  const [autoMatchDesc, setAutoMatchDesc] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
   const selectedJob = jobs?.find((j) => j._id === selectedJobId) as Job | undefined;
+
+  const handleCreated = (jobId: Id<"jobs">, description: string) => {
+    setAutoMatchDesc(description);
+    setSelectedJobId(jobId);
+  };
 
   if (jobs === undefined) {
     return (
@@ -777,7 +801,13 @@ function JobsContent() {
   }
 
   if (selectedJob) {
-    return <JobDetailView job={selectedJob} onBack={() => setSelectedJobId(null)} />;
+    return (
+      <JobDetailView
+        job={selectedJob}
+        autoMatchDescription={autoMatchDesc}
+        onBack={() => { setSelectedJobId(null); setAutoMatchDesc(null); }}
+      />
+    );
   }
 
   return (
@@ -806,12 +836,12 @@ function JobsContent() {
       ) : (
         <div className="space-y-3">
           {jobs.map((job) => (
-            <JobCard key={job._id} job={job as Job} onSelect={() => setSelectedJobId(job._id)} />
+            <JobCard key={job._id} job={job as Job} onSelect={() => { setAutoMatchDesc(null); setSelectedJobId(job._id); }} />
           ))}
         </div>
       )}
 
-      <CreateJobDialog open={createOpen} onClose={() => setCreateOpen(false)} />
+      <CreateJobDialog open={createOpen} onClose={() => setCreateOpen(false)} onCreated={handleCreated} />
     </div>
   );
 }
