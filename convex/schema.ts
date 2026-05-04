@@ -126,6 +126,12 @@ export default defineSchema({
     cvId: v.id("cvs"),
   }).index("by_workable_candidate_id", ["workableCandidateId"]),
 
+  cvNotes: defineTable({
+    cvId: v.id("cvs"),
+    userId: v.id("users"),
+    text: v.string(),
+  }).index("by_cv", ["cvId"]),
+
   workableImports: defineTable({
     status: v.union(v.literal("running"), v.literal("done"), v.literal("error")),
     totalCandidates: v.number(),
