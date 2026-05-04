@@ -191,12 +191,12 @@ export const aiSearch = action({
           content: `You are a talent search assistant. Interpret the user's natural language search query for CV/resume matching.
 Return JSON with these fields:
 {
-  "searchText": "optimized search string combining key skills, titles, industries",
+  "searchText": "optimized search string combining key skills, titles, industries, and any specific company names mentioned",
   "industry": "one of: Technology, Finance, Healthcare, FMCG, Retail, Manufacturing, Energy, Education, Consulting, Marketing, Legal, Real Estate, Hospitality, Media, Logistics — or null",
   "seniority": "one of: junior, mid, senior, lead, executive — or null",
   "minYears": number or null,
   "interpretation": "one sentence describing what you are searching for e.g. 'Searching for senior FMCG professionals with supply chain experience and 5+ years'",
-  "keywords": ["key1", "key2", "key3"]
+  "keywords": ["key1", "key2", ...] — IMPORTANT: always include any specific company names, brand names, or organizations mentioned in the query as individual keywords
 }`,
         },
         { role: "user", content: args.query },
@@ -225,13 +225,35 @@ Return JSON with these fields:
       // keep defaults
     }
 
-    // Step 2: Run the text search
-    const rawResults = await ctx.runQuery(api.cvs.searchCvs, {
-      query: interp.searchText,
-      industry: interp.industry,
-      seniority: interp.seniority,
-      limit: (args.limit ?? 20) * 2, // fetch extra to allow re-ranking
-    });
+    // Step 2: Run multiple text searches — AI-rewritten text, original query, and keywords
+    // This ensures specific company names / terms in the original query are not lost
+    const fetchLimit = (args.limit ?? 20) * 2;
+
+    const [rewrittenResults, originalResults, ...keywordResults] = await Promise.all([
+      ctx.runQuery(api.cvs.searchCvs, {
+        query: interp.searchText,
+        industry: interp.industry,
+        seniority: interp.seniority,
+        limit: fetchLimit,
+      }),
+      ctx.runQuery(api.cvs.searchCvs, {
+        query: args.query,
+        limit: fetchLimit,
+      }),
+      ...interp.keywords.slice(0, 3).map((kw) =>
+        ctx.runQuery(api.cvs.searchCvs, { query: kw, limit: 10 })
+      ),
+    ]);
+
+    // Merge and deduplicate, preserving order (rewritten first, then original, then keywords)
+    const seen = new Set<string>();
+    const rawResults: typeof rewrittenResults = [];
+    for (const cv of [...rewrittenResults, ...originalResults, ...keywordResults.flat()]) {
+      if (!seen.has(cv._id)) {
+        seen.add(cv._id);
+        rawResults.push(cv);
+      }
+    }
 
     if (rawResults.length === 0) {
       return { interpretation: interp, results: [] };
@@ -248,6 +270,8 @@ Return JSON with these fields:
       location: cv.location ?? "",
       skills: (cv.skills ?? []).slice(0, 10).join(", "),
       summary: cv.summary ?? "",
+      // Include first 800 chars of raw text so AI can verify company names and tenure
+      rawTextSnippet: (cv.rawText ?? "").slice(0, 800),
     }));
 
     const rankResponse = await openai.chat.completions.create({
@@ -257,7 +281,8 @@ Return JSON with these fields:
           role: "system",
           content: `You are a talent matching expert. Given a search query and a list of candidates, rank the most relevant ones and provide a short reason why each matches.
 Return JSON: { "ranked": [ { "index": number, "score": 0-100, "reason": "1 sentence why this candidate matches" }, ... ] }
-Include only candidates with score > 30. Sort by score descending. Max 20 results.`,
+Include only candidates with score > 30. Sort by score descending. Max 20 results.
+IMPORTANT: Pay close attention to specific company names mentioned in the query. If a query asks for experience at a specific company, only candidates who have worked at that company should score above 50. Also respect any minimum years of experience requirements — penalise candidates who do not meet them.`,
         },
         {
           role: "user",
