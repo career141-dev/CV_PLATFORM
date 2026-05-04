@@ -57,21 +57,32 @@ async function fetchCandidateDetail(
   apiKey: string,
   candidateId: string
 ): Promise<WorkableCandidate> {
-  // Rate-limit: wait 350ms before each call to stay under Workable's limits
-  await new Promise((resolve) => setTimeout(resolve, 350));
+  // Base delay between calls to respect Workable rate limits (~1 req/s)
+  await new Promise((resolve) => setTimeout(resolve, 600));
   const url = workableUrl(subdomain, `/candidates/${candidateId}`);
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
-  if (!res.ok) return { id: candidateId, name: candidateId };
-  const data = (await res.json()) as WorkableCandidateDetail;
-  return {
-    id: data.candidate.id,
-    name: data.candidate.name,
-    email: data.candidate.email,
-    phone: data.candidate.phone,
-    resume_url: extractResumeUrl(data.candidate),
-  };
+
+  // Retry up to 3 times on 429
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (res.status === 429) {
+      // Back off 5s on rate limit then retry
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      continue;
+    }
+    if (!res.ok) return { id: candidateId, name: candidateId };
+    const data = (await res.json()) as WorkableCandidateDetail;
+    return {
+      id: data.candidate.id,
+      name: data.candidate.name,
+      email: data.candidate.email,
+      phone: data.candidate.phone,
+      resume_url: extractResumeUrl(data.candidate),
+    };
+  }
+  // All retries exhausted — skip this candidate
+  return { id: candidateId, name: candidateId };
 }
 
 type WorkableCandidatesResponse = {
