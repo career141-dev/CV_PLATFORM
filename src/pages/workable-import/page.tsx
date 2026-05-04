@@ -161,7 +161,7 @@ function ImportContent() {
     if (!importStatus) return;
     setIsImporting(true);
     try {
-      await retryImport({ importId: importStatus._id, subdomain, apiKey });
+      await retryImport({ importId: importStatus._id, subdomain: subdomain || undefined, apiKey: apiKey || undefined });
       setImportStatus((prev) => prev ? { ...prev, status: "running", errorMessage: "" } : prev);
       startPolling(importStatus._id);
       toast.info("Import retrying from where it left off.");
@@ -176,7 +176,7 @@ function ImportContent() {
     if (!importStatus) return;
     setIsImporting(true);
     try {
-      await retrySkippedAction({ importId: importStatus._id, subdomain, apiKey });
+      await retrySkippedAction({ importId: importStatus._id, subdomain: subdomain || undefined, apiKey: apiKey || undefined });
       setImportStatus((prev) => prev ? { ...prev, status: "running", errorMessage: "", skipped: 0, failed: 0 } : prev);
       startPolling(importStatus._id);
       toast.info("Retrying skipped candidates from the beginning. Already-imported CVs will be skipped automatically.");
