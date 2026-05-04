@@ -171,7 +171,7 @@ function ImportContent() {
     if (!importStatus) return;
     setIsImporting(true);
     try {
-      await resumeImport({ importId: importStatus._id });
+      await resumeImport({ importId: importStatus._id, subdomain, apiKey });
       setImportStatus((prev) => prev ? { ...prev, status: "running" } : prev);
       toast.info("Import resumed from where it left off.");
     } catch (err) {

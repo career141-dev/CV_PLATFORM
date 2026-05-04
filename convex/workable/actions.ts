@@ -184,6 +184,8 @@ export const startBulkImport = action({
 export const resumeImport = action({
   args: {
     importId: v.id("workableImports"),
+    subdomain: v.optional(v.string()),
+    apiKey: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<void> => {
     const identity = await ctx.auth.getUserIdentity();
@@ -191,8 +193,12 @@ export const resumeImport = action({
 
     const job = await ctx.runQuery(internal.workable.db.getImportJob, { importId: args.importId });
     if (!job) throw new ConvexError({ message: "Import job not found", code: "NOT_FOUND" });
-    if (!job.subdomain || !job.apiKey) {
-      throw new ConvexError({ message: "No credentials stored for this import. Please start a new import.", code: "BAD_REQUEST" });
+
+    // Use provided credentials, or fall back to stored ones
+    const subdomain = args.subdomain ?? job.subdomain;
+    const apiKey = args.apiKey ?? job.apiKey;
+    if (!subdomain || !apiKey) {
+      throw new ConvexError({ message: "Please enter your Workable subdomain and API key to resume.", code: "BAD_REQUEST" });
     }
 
     const user = await ctx.runQuery(api.users.getUserByToken, {
@@ -210,8 +216,8 @@ export const resumeImport = action({
     // Resume from last saved cursor (or from beginning if none)
     ctx.scheduler.runAfter(0, internal.workable.actions.runImport, {
       importId: args.importId,
-      subdomain: job.subdomain,
-      apiKey: job.apiKey,
+      subdomain,
+      apiKey,
       userId: user._id,
       nextUrl: job.lastCursor ?? undefined,
       imported: job.imported,
