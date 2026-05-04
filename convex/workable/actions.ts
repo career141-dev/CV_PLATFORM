@@ -96,14 +96,25 @@ async function fetchCandidatesPage(
   nextUrl?: string
 ): Promise<WorkableCandidatesResponse> {
   const url = nextUrl ?? workableUrl(subdomain, "/candidates?limit=10");
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Workable API ${res.status}: ${text.slice(0, 300)}`);
+
+  // Retry up to 5 times on 429 with exponential backoff
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (res.status === 429) {
+      // Back off progressively: 10s, 20s, 40s, 80s, 160s
+      const backoff = 10000 * Math.pow(2, attempt);
+      await new Promise((resolve) => setTimeout(resolve, backoff));
+      continue;
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Workable API ${res.status}: ${text.slice(0, 300)}`);
+    }
+    return res.json() as Promise<WorkableCandidatesResponse>;
   }
-  return res.json() as Promise<WorkableCandidatesResponse>;
+  throw new Error("Workable API 429: rate limit exceeded after retries");
 }
 
 async function downloadResume(
