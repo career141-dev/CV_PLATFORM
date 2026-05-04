@@ -419,7 +419,7 @@ function ImportContent() {
                 )}
 
                 {/* Resume Import button for paused/error state */}
-                {(importStatus.status === "paused" || importStatus.status === "error") && importStatus.subdomain && (
+                {(importStatus.status === "paused" || importStatus.status === "error") && (
                   <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}

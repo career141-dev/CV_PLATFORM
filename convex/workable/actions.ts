@@ -96,25 +96,14 @@ async function fetchCandidatesPage(
   nextUrl?: string
 ): Promise<WorkableCandidatesResponse> {
   const url = nextUrl ?? workableUrl(subdomain, "/candidates?limit=10");
-
-  // Retry up to 5 times on 429 with exponential backoff
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (res.status === 429) {
-      // Back off progressively: 10s, 20s, 40s, 80s, 160s
-      const backoff = 10000 * Math.pow(2, attempt);
-      await new Promise((resolve) => setTimeout(resolve, backoff));
-      continue;
-    }
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Workable API ${res.status}: ${text.slice(0, 300)}`);
-    }
-    return res.json() as Promise<WorkableCandidatesResponse>;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Workable API ${res.status}: ${text.slice(0, 300)}`);
   }
-  throw new Error("Workable API 429: rate limit exceeded after retries");
+  return res.json() as Promise<WorkableCandidatesResponse>;
 }
 
 async function downloadResume(
@@ -293,7 +282,35 @@ export const runImport = internalAction({
     let failed = args.failed;
 
     try {
-      const page = await fetchCandidatesPage(args.subdomain, args.apiKey, args.nextUrl);
+      let page: WorkableCandidatesResponse;
+      try {
+        page = await fetchCandidatesPage(args.subdomain, args.apiKey, args.nextUrl);
+      } catch (fetchErr) {
+        const fetchMsg = fetchErr instanceof Error ? fetchErr.message : "fetch failed";
+        const is429 = fetchMsg.includes("429") || fetchMsg.includes("rate limit");
+        if (is429) {
+          // Save progress and reschedule after 60s — don't sleep inside the action
+          await ctx.runMutation(internal.workable.db.updateImportJob, {
+            importId: args.importId,
+            imported: args.imported,
+            skipped: args.skipped,
+            failed: args.failed,
+            lastCursor: args.nextUrl ?? undefined,
+          });
+          ctx.scheduler.runAfter(60000, internal.workable.actions.runImport, {
+            importId: args.importId,
+            subdomain: args.subdomain,
+            apiKey: args.apiKey,
+            userId: args.userId,
+            nextUrl: args.nextUrl,
+            imported: args.imported,
+            skipped: args.skipped,
+            failed: args.failed,
+          });
+          return;
+        }
+        throw fetchErr;
+      }
 
       // Update total count on first page
       if (!args.nextUrl) {
