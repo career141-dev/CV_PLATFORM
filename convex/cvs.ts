@@ -123,6 +123,44 @@ export const getPausedCvs = query({
   },
 });
 
+export const saveRawText = mutation({
+  args: {
+    cvId: v.id("cvs"),
+    rawText: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const cv = await ctx.db.get(args.cvId);
+    const oldStatus = cv?.status ?? null;
+    await ctx.db.patch(args.cvId, {
+      rawText: args.rawText,
+      status: "ready",
+      isStructured: false,
+    });
+    if (oldStatus) await adjustStats(ctx, oldStatus, "ready");
+  },
+});
+
+export const markStructured = mutation({
+  args: {
+    cvId: v.id("cvs"),
+    candidateName: v.optional(v.string()),
+    email: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    location: v.optional(v.string()),
+    currentTitle: v.optional(v.string()),
+    industry: v.optional(v.string()),
+    sector: v.optional(v.string()),
+    seniority: v.optional(v.string()),
+    yearsOfExperience: v.optional(v.number()),
+    skills: v.optional(v.array(v.string())),
+    languages: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const { cvId, ...fields } = args;
+    await ctx.db.patch(cvId, { ...fields, isStructured: true });
+  },
+});
+
 export const saveCvData = mutation({
   args: {
     cvId: v.id("cvs"),

@@ -40,6 +40,9 @@ export default defineSchema({
     ),
     errorMessage: v.optional(v.string()),
 
+    // Lazy structuring — true if AI has extracted structured fields
+    isStructured: v.optional(v.boolean()),
+
     // Who uploaded
     uploadedBy: v.id("users"),
 

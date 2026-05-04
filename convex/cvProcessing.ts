@@ -101,6 +101,53 @@ Return ONLY valid JSON with these fields (omit fields you cannot determine):
   }
 }
 
+// ─── Extract text only (lazy processing — no AI cost) ─────────────────────────
+export const extractTextOnly = action({
+  args: {
+    cvId: v.id("cvs"),
+    storageId: v.id("_storage"),
+    fileType: v.string(),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    // Guard: skip if already has raw text
+    const existing = await ctx.runQuery(api.cvs.getCv, { cvId: args.cvId });
+    if (existing?.rawText) return;
+
+    try {
+      // Mark as processing briefly while we extract text
+      await ctx.runMutation(api.cvs.updateCvStatus, {
+        cvId: args.cvId,
+        status: "processing",
+      });
+
+      const url = await ctx.storage.getUrl(args.storageId);
+      if (!url) throw new Error("Could not get file URL");
+
+      const response = await fetch(url);
+      const buffer = await response.arrayBuffer();
+
+      const rawText = await extractTextFromFile(buffer, args.fileType);
+
+      if (!rawText || rawText.trim().length < 10) {
+        throw new Error("Could not extract text from file");
+      }
+
+      // Save raw text, mark as ready (not structured — lazy)
+      await ctx.runMutation(api.cvs.saveRawText, {
+        cvId: args.cvId,
+        rawText: rawText.slice(0, 50000),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Text extraction failed";
+      await ctx.runMutation(api.cvs.updateCvStatus, {
+        cvId: args.cvId,
+        status: "error",
+        errorMessage: message,
+      });
+    }
+  },
+});
+
 export const processCv = action({
   args: {
     cvId: v.id("cvs"),
@@ -179,12 +226,20 @@ export const resumeProcessing = action({
 
     const pausedCvs = await ctx.runQuery(api.cvs.getPausedCvs, {});
     for (const cv of pausedCvs) {
-      // Re-queue each paused CV for processing
-      ctx.scheduler.runAfter(0, api.cvProcessing.processCv, {
-        cvId: cv._id,
-        storageId: cv.storageId,
-        fileType: cv.fileType,
-      });
+      if (cv.rawText) {
+        // Already has raw text — just mark as ready (lazy approach, no AI needed)
+        await ctx.runMutation(api.cvs.saveRawText, {
+          cvId: cv._id,
+          rawText: cv.rawText,
+        });
+      } else {
+        // No raw text yet — re-queue text extraction only
+        ctx.scheduler.runAfter(0, api.cvProcessing.extractTextOnly, {
+          cvId: cv._id,
+          storageId: cv.storageId,
+          fileType: cv.fileType,
+        });
+      }
     }
     return { resumed: pausedCvs.length };
   },

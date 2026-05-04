@@ -350,7 +350,7 @@ export const triggerProcess = internalAction({
     fileType: v.string(),
   },
   handler: async (ctx, args): Promise<void> => {
-    await ctx.runAction(api.cvProcessing.processCv, {
+    await ctx.runAction(api.cvProcessing.extractTextOnly, {
       cvId: args.cvId,
       storageId: args.storageId,
       fileType: args.fileType,

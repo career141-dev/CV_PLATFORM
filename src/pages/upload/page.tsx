@@ -34,7 +34,7 @@ function UploadContent() {
 
   const generateUploadUrl = useMutation(api.cvs.generateUploadUrl);
   const createCv = useMutation(api.cvs.createCv);
-  const processCv = useAction(api.cvProcessing.processCv);
+  const extractTextOnly = useAction(api.cvProcessing.extractTextOnly);
   const resumeProcessing = useAction(api.cvProcessing.resumeProcessing);
   const pausedCvs = useQuery(api.cvs.getPausedCvs, {});
 
@@ -97,10 +97,10 @@ function UploadContent() {
 
         updateFile(uf.id, { status: "processing", cvId });
 
-        // 4. Trigger AI processing (fire and forget)
-        processCv({
+        // 4. Extract text only (no AI — lazy structuring)
+        extractTextOnly({
           cvId,
-          storageId: storageId as Parameters<typeof processCv>[0]["storageId"],
+          storageId: storageId as Parameters<typeof extractTextOnly>[0]["storageId"],
           fileType: getFileType(uf.file),
         }).then(() => {
           updateFile(uf.id, { status: "done" });
@@ -145,7 +145,7 @@ function UploadContent() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold mb-1">Upload CVs</h1>
         <p className="text-muted-foreground text-sm">
-          Upload PDF, Word, or text files. AI will extract and structure all candidate data automatically.
+          Upload PDF, Word, or text files. CVs are saved instantly and structured automatically when you search.
         </p>
       </div>
 
@@ -240,8 +240,8 @@ function UploadContent() {
         <h3 className="text-sm font-semibold mb-2">Tips for best results</h3>
         <ul className="text-sm text-muted-foreground space-y-1.5 list-disc list-inside">
           <li>PDF and DOCX files are preferred for accurate text extraction</li>
-          <li>Each CV is processed by AI to extract name, skills, industry, seniority and more</li>
-          <li>Processing takes 10-30 seconds per CV depending on file complexity</li>
+          <li>CVs are saved instantly — no AI processing cost at upload time</li>
+          <li>Candidate data is structured automatically when you run a search</li>
           <li>You can upload multiple files at once — up to 50 at a time recommended</li>
         </ul>
       </div>
