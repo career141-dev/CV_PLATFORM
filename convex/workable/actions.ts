@@ -281,12 +281,15 @@ export const runImportBatch = internalAction({
       return;
     }
 
-    // On first page, update total
-    if (!args.nextUrl) {
-      await ctx.runMutation(internal.workable.db.updateImportJob, {
-        importId: args.importId,
-        totalCandidates: page.candidates.length,
-      });
+    // Accumulate total candidates as pages arrive (Workable doesn't give a grand total upfront)
+    if (page.candidates.length > 0) {
+      const job = await ctx.runQuery(internal.workable.db.getImportJob, { importId: args.importId });
+      if (job) {
+        await ctx.runMutation(internal.workable.db.updateImportJob, {
+          importId: args.importId,
+          totalCandidates: (job.totalCandidates ?? 0) + page.candidates.length,
+        });
+      }
     }
 
     for (const candidate of page.candidates) {

@@ -28,11 +28,8 @@ export const runCleanup = action({
       if (result.deleted === 0) break;
     }
 
-    // Recompute stats
-    const stats = await ctx.runMutation(internal.workable.cleanup.recomputeStats, {});
-
     return {
-      message: `Deleted ${totalDeleted} non-ready CVs, ${importJobsDeleted} import jobs. Stats: ${stats.ready} ready CVs remaining.`,
+      message: `Deleted ${totalDeleted} non-ready CVs and ${importJobsDeleted} import jobs. Your processed CVs are intact.`,
     };
   },
 });
