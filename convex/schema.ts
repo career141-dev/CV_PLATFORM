@@ -126,6 +126,62 @@ export default defineSchema({
     cvId: v.id("cvs"),
   }).index("by_workable_candidate_id", ["workableCandidateId"]),
 
+  // Jobs — open positions for candidate matching
+  jobs: defineTable({
+    title: v.string(),
+    description: v.string(),
+    industry: v.optional(v.string()),
+    seniority: v.optional(v.string()),
+    location: v.optional(v.string()),
+    createdBy: v.id("users"),
+    // Latest match results snapshot (stored after each run)
+    lastMatchedAt: v.optional(v.string()),
+    matchResults: v.optional(v.array(v.object({
+      cvId: v.string(),
+      overallScore: v.number(),
+      breakdown: v.object({
+        skills: v.number(),
+        experience: v.number(),
+        seniority: v.number(),
+        industry: v.number(),
+        location: v.number(),
+      }),
+      matchedSkills: v.array(v.string()),
+      missingSkills: v.array(v.string()),
+      reason: v.string(),
+    }))),
+    jobRequirements: v.optional(v.object({
+      title: v.string(),
+      requiredSkills: v.array(v.string()),
+      preferredSkills: v.array(v.string()),
+      minYearsExperience: v.union(v.number(), v.null()),
+      industry: v.union(v.string(), v.null()),
+      seniority: v.union(v.string(), v.null()),
+      location: v.union(v.string(), v.null()),
+      education: v.union(v.string(), v.null()),
+      summary: v.string(),
+    })),
+  }).index("by_created_by", ["createdBy"]),
+
+  // Pipeline stages for candidates per job
+  pipeline: defineTable({
+    jobId: v.id("jobs"),
+    cvId: v.id("cvs"),
+    stage: v.union(
+      v.literal("new"),
+      v.literal("shortlisted"),
+      v.literal("interview"),
+      v.literal("offered"),
+      v.literal("hired"),
+      v.literal("rejected")
+    ),
+    notes: v.optional(v.string()),
+    movedAt: v.string(), // ISO timestamp
+  })
+    .index("by_job", ["jobId"])
+    .index("by_job_and_cv", ["jobId", "cvId"])
+    .index("by_job_and_stage", ["jobId", "stage"]),
+
   workableImports: defineTable({
     status: v.union(v.literal("running"), v.literal("done"), v.literal("error")),
     totalCandidates: v.number(),

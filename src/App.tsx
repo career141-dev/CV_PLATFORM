@@ -11,6 +11,8 @@ import CvProfile from "./pages/cv/page.tsx";
 import JdMatch from "./pages/jd-match/page.tsx";
 import WorkableImport from "./pages/workable-import/page.tsx";
 
+import Jobs from "./pages/jobs/page.tsx";
+
 export default function App() {
   return (
     <DefaultProviders>
@@ -20,6 +22,7 @@ export default function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/upload" element={<Upload />} />
           <Route path="/search" element={<Search />} />
+          <Route path="/jobs" element={<Jobs />} />
           <Route path="/jd-match" element={<JdMatch />} />
           <Route path="/workable-import" element={<WorkableImport />} />
           <Route path="/cv/:cvId" element={<CvProfile />} />
