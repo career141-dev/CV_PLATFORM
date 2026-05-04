@@ -56,6 +56,43 @@ export const deleteNonReadyCvsBatch = internalMutation({
   },
 });
 
+// Safely recompute cvStats by counting CVs per status in small batches.
+// Uses take(500) per pass to stay well under Convex scan limits.
+export const recomputeStatsSafe = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let ready = 0, processing = 0, errors = 0, paused = 0;
+    const statuses = ["ready", "processing", "error", "paused"] as const;
+
+    for (const status of statuses) {
+      // Count using repeated take() passes to avoid scan limits
+      let cursor: string | null = null;
+      let done = false;
+      while (!done) {
+        const page = await ctx.db
+          .query("cvs")
+          .withIndex("by_status", (q) => q.eq("status", status))
+          .paginate({ numItems: 500, cursor });
+        if (status === "ready") ready += page.page.length;
+        else if (status === "processing") processing += page.page.length;
+        else if (status === "error") errors += page.page.length;
+        else if (status === "paused") paused += page.page.length;
+        cursor = page.continueCursor;
+        done = page.isDone;
+      }
+    }
+
+    const total = ready + processing + errors + paused;
+    const existing = await ctx.db.query("cvStats").first();
+    if (existing) {
+      await ctx.db.patch(existing._id, { total, ready, processing, errors, paused });
+    } else {
+      await ctx.db.insert("cvStats", { total, ready, processing, errors, paused });
+    }
+    return { total, ready, processing, errors, paused };
+  },
+});
+
 // Delete all workableImports records
 export const deleteAllImportJobs = internalMutation({
   args: {},

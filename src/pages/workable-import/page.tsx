@@ -75,6 +75,7 @@ function ImportContent() {
   const getImportStatus = useAction(api.workable.actions.getImportStatus);
   const retryImport = useAction(api.workable.actions.retryImport);
   const runCleanup = useAction(api.workable.cleanupAction.runCleanup);
+  const fixStats = useAction(api.workable.cleanupAction.fixStats);
 
   // Restore last import on mount
   useEffect(() => {
@@ -163,6 +164,15 @@ function ImportContent() {
       const msg = err instanceof Error ? err.message : "Failed to retry";
       toast.error(msg);
       setIsImporting(false);
+    }
+  };
+
+  const handleFixStats = async () => {
+    try {
+      const result = await fixStats();
+      toast.success(result.message);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to fix stats");
     }
   };
 
@@ -406,14 +416,24 @@ function ImportContent() {
           )}
 
           {/* Danger zone — cleanup */}
-          <div className="border border-destructive/30 rounded-xl p-4">
-            <p className="text-sm font-medium text-destructive mb-1">Danger zone</p>
-            <p className="text-xs text-muted-foreground mb-3">
-              Delete all non-ready CVs (processing, paused, error) and clear import history. Ready/processed CVs are kept.
-            </p>
-            <Button variant="secondary" size="sm" onClick={handleCleanup} className="text-destructive border-destructive/40 gap-2">
-              <AlertCircle className="w-3.5 h-3.5" /> Clean up non-ready CVs
-            </Button>
+          <div className="border border-destructive/30 rounded-xl p-4 space-y-3">
+            <p className="text-sm font-medium text-destructive">Danger zone</p>
+            <div>
+              <p className="text-xs text-muted-foreground mb-2">
+                If the dashboard stats look wrong, fix them here (no data is deleted).
+              </p>
+              <Button variant="secondary" size="sm" onClick={handleFixStats} className="gap-2">
+                <RotateCcw className="w-3.5 h-3.5" /> Fix Dashboard Stats
+              </Button>
+            </div>
+            <div className="border-t border-destructive/20 pt-3">
+              <p className="text-xs text-muted-foreground mb-2">
+                Delete all non-ready CVs (processing, paused, error) and clear import history. Ready/processed CVs are kept.
+              </p>
+              <Button variant="secondary" size="sm" onClick={handleCleanup} className="text-destructive border-destructive/40 gap-2">
+                <AlertCircle className="w-3.5 h-3.5" /> Clean up non-ready CVs
+              </Button>
+            </div>
           </div>
         </>
       )}
