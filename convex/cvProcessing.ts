@@ -159,6 +159,219 @@ export const processCv = action({
   },
 });
 
+type JobRequirements = {
+  title: string;
+  requiredSkills: string[];
+  preferredSkills: string[];
+  minYearsExperience: number | null;
+  industry: string | null;
+  seniority: string | null;
+  location: string | null;
+  education: string | null;
+  summary: string; // 1-sentence description of the role
+};
+
+type CandidateMatchBreakdown = {
+  skills: number;       // 0-100
+  experience: number;   // 0-100
+  seniority: number;    // 0-100
+  industry: number;     // 0-100
+  location: number;     // 0-100
+};
+
+type CandidateMatch = {
+  cvId: string;
+  overallScore: number;
+  breakdown: CandidateMatchBreakdown;
+  matchedSkills: string[];
+  missingSkills: string[];
+  reason: string;
+};
+
+export const matchByJobDescription = action({
+  args: {
+    jobDescription: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (
+    ctx,
+    args
+  ): Promise<{
+    jobRequirements: JobRequirements;
+    matches: CandidateMatch[];
+  }> => {
+    // Step 1: Parse JD into structured requirements
+    const parseResponse = await openai.chat.completions.create({
+      model: "openai/gpt-5-mini",
+      messages: [
+        {
+          role: "system",
+          content: `You are a job description parser. Extract structured hiring requirements from a job description.
+Return ONLY valid JSON with these fields (use null if not specified):
+{
+  "title": "job title",
+  "requiredSkills": ["skill1", "skill2", ...],
+  "preferredSkills": ["skill1", ...],
+  "minYearsExperience": number or null,
+  "industry": "one of: Technology, Finance, Healthcare, FMCG, Retail, Manufacturing, Energy, Education, Consulting, Marketing, Legal, Real Estate, Hospitality, Media, Logistics — or null",
+  "seniority": "one of: junior, mid, senior, lead, executive — or null",
+  "location": "city/country or null",
+  "education": "required education level or null",
+  "summary": "1 sentence describing this role and ideal candidate"
+}`,
+        },
+        { role: "user", content: args.jobDescription.slice(0, 6000) },
+      ],
+      response_format: { type: "json_object" },
+    });
+
+    let jobReq: JobRequirements = {
+      title: "Position",
+      requiredSkills: [],
+      preferredSkills: [],
+      minYearsExperience: null,
+      industry: null,
+      seniority: null,
+      location: null,
+      education: null,
+      summary: "Searching for a qualified candidate",
+    };
+
+    try {
+      const parsed = JSON.parse(
+        parseResponse.choices[0]?.message?.content ?? "{}"
+      ) as Partial<JobRequirements>;
+      jobReq = {
+        title: parsed.title ?? "Position",
+        requiredSkills: parsed.requiredSkills ?? [],
+        preferredSkills: parsed.preferredSkills ?? [],
+        minYearsExperience: parsed.minYearsExperience ?? null,
+        industry: parsed.industry ?? null,
+        seniority: parsed.seniority ?? null,
+        location: parsed.location ?? null,
+        education: parsed.education ?? null,
+        summary: parsed.summary ?? "Searching for a qualified candidate",
+      };
+    } catch { /* keep defaults */ }
+
+    // Step 2: Retrieve candidates using multi-term search
+    const fetchLimit = (args.limit ?? 20) * 3;
+    const keyTerms = [
+      jobReq.title,
+      ...jobReq.requiredSkills.slice(0, 3),
+      jobReq.industry,
+    ].filter((t): t is string => Boolean(t));
+
+    const searchResults = await Promise.all(
+      keyTerms.slice(0, 4).map((term) =>
+        ctx.runQuery(api.cvs.searchCvs, {
+          query: term,
+          industry: jobReq.industry ?? undefined,
+          seniority: jobReq.seniority ?? undefined,
+          limit: fetchLimit,
+        })
+      )
+    );
+
+    // Merge and deduplicate
+    const seen = new Set<string>();
+    const candidates: typeof searchResults[0] = [];
+    for (const batch of searchResults) {
+      for (const cv of batch) {
+        if (!seen.has(cv._id)) {
+          seen.add(cv._id);
+          candidates.push(cv);
+        }
+      }
+    }
+
+    if (candidates.length === 0) {
+      return { jobRequirements: jobReq, matches: [] };
+    }
+
+    // Step 3: AI scores each candidate with breakdown
+    const candidateSummaries = candidates.slice(0, 30).map((cv, i) => ({
+      index: i,
+      name: cv.candidateName ?? cv.fileName,
+      title: cv.currentTitle ?? "",
+      industry: cv.industry ?? "",
+      seniority: cv.seniority ?? "",
+      years: cv.yearsOfExperience ?? null,
+      location: cv.location ?? "",
+      skills: cv.skills ?? [],
+      summary: cv.summary ?? "",
+      rawTextSnippet: (cv.rawText ?? "").slice(0, 1000),
+    }));
+
+    const scoreResponse = await openai.chat.completions.create({
+      model: "openai/gpt-5-mini",
+      messages: [
+        {
+          role: "system",
+          content: `You are a talent matching expert. Score each candidate against a job description.
+For each candidate return a breakdown score (0-100) across 5 dimensions, plus which required skills they have/lack.
+Return JSON:
+{
+  "matches": [
+    {
+      "index": number,
+      "overallScore": 0-100,
+      "breakdown": {
+        "skills": 0-100,
+        "experience": 0-100,
+        "seniority": 0-100,
+        "industry": 0-100,
+        "location": 0-100
+      },
+      "matchedSkills": ["skill1", ...],
+      "missingSkills": ["skill1", ...],
+      "reason": "1-2 sentence explanation of fit"
+    }
+  ]
+}
+Only include candidates with overallScore > 25. Sort by overallScore descending. Max 20 results.`,
+        },
+        {
+          role: "user",
+          content: `Job Requirements:\n${JSON.stringify(jobReq, null, 2)}\n\nCandidates:\n${JSON.stringify(candidateSummaries, null, 2)}`,
+        },
+      ],
+      response_format: { type: "json_object" },
+    });
+
+    type ScoreItem = {
+      index: number;
+      overallScore: number;
+      breakdown: CandidateMatchBreakdown;
+      matchedSkills: string[];
+      missingSkills: string[];
+      reason: string;
+    };
+
+    let scored: ScoreItem[] = [];
+    try {
+      const parsed = JSON.parse(
+        scoreResponse.choices[0]?.message?.content ?? "{}"
+      ) as { matches?: ScoreItem[] };
+      scored = parsed.matches ?? [];
+    } catch { /* empty */ }
+
+    const matches: CandidateMatch[] = scored
+      .filter((s) => s.index >= 0 && s.index < candidates.length)
+      .slice(0, args.limit ?? 20)
+      .map((s) => ({
+        cvId: candidates[s.index]!._id,
+        overallScore: s.overallScore,
+        breakdown: s.breakdown,
+        matchedSkills: s.matchedSkills ?? [],
+        missingSkills: s.missingSkills ?? [],
+        reason: s.reason,
+      }));
+
+    return { jobRequirements: jobReq, matches };
+  },
+});
+
 type SearchInterpretation = {
   searchText: string;
   industry?: string;

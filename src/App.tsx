@@ -8,6 +8,8 @@ import Upload from "./pages/upload/page.tsx";
 import Search from "./pages/search/page.tsx";
 import CvProfile from "./pages/cv/page.tsx";
 
+import JdMatch from "./pages/jd-match/page.tsx";
+
 export default function App() {
   return (
     <DefaultProviders>
@@ -17,6 +19,7 @@ export default function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/upload" element={<Upload />} />
           <Route path="/search" element={<Search />} />
+          <Route path="/jd-match" element={<JdMatch />} />
           <Route path="/cv/:cvId" element={<CvProfile />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
