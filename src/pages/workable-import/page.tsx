@@ -77,6 +77,7 @@ function ImportContent() {
   const stopImport = useAction(api.workable.actions.stopImport);
   const runCleanup = useAction(api.workable.cleanupAction.runCleanup);
   const fixStats = useAction(api.workable.cleanupAction.fixStats);
+  const fullReset = useAction(api.workable.cleanupAction.fullReset);
 
   // Restore last import on mount
   useEffect(() => {
@@ -178,6 +179,18 @@ function ImportContent() {
       toast.info("Import stopped. You can resume it later.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to stop import");
+    }
+  };
+
+  const handleFullReset = async () => {
+    if (!confirm("⚠️ This will permanently delete ALL CVs and all import history. This cannot be undone. Are you absolutely sure?")) return;
+    try {
+      const result = await fullReset();
+      toast.success(result.message);
+      setImportStatus(null);
+      setImportId(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Full reset failed");
     }
   };
 
@@ -473,6 +486,14 @@ function ImportContent() {
               </p>
               <Button variant="secondary" size="sm" onClick={handleFixStats} className="gap-2">
                 <RotateCcw className="w-3.5 h-3.5" /> Fix Dashboard Stats
+              </Button>
+            </div>
+            <div className="border-t border-destructive/20 pt-3">
+              <p className="text-xs text-muted-foreground mb-2">
+                Delete ALL CVs and import history — including processed ones. Use this to start completely fresh.
+              </p>
+              <Button variant="secondary" size="sm" onClick={handleFullReset} className="text-destructive border-destructive/40 gap-2">
+                <XCircle className="w-3.5 h-3.5" /> Delete All CVs & Reset
               </Button>
             </div>
             <div className="border-t border-destructive/20 pt-3">

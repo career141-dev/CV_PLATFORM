@@ -56,6 +56,38 @@ export const deleteNonReadyCvsBatch = internalMutation({
   },
 });
 
+// Delete ALL CVs (regardless of status) in batches of 50, plus their lookups
+export const deleteAllCvsBatch = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const cvs = await ctx.db.query("cvs").take(50);
+    for (const cv of cvs) {
+      if (cv.workableCandidateId) {
+        const lookup = await ctx.db
+          .query("workableCandidateLookup")
+          .withIndex("by_workable_candidate_id", (q) =>
+            q.eq("workableCandidateId", cv.workableCandidateId!)
+          )
+          .first();
+        if (lookup) await ctx.db.delete(lookup._id);
+      }
+      await ctx.db.delete(cv._id);
+    }
+    return { deleted: cvs.length };
+  },
+});
+
+// Reset cvStats to zero
+export const resetStats = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const stats = await ctx.db.query("cvStats").first();
+    if (stats) {
+      await ctx.db.patch(stats._id, { total: 0, ready: 0, processing: 0, errors: 0, paused: 0 });
+    }
+  },
+});
+
 // Safely recompute cvStats by counting CVs per status in small batches.
 // Uses take(500) per pass to stay well under Convex scan limits.
 export const recomputeStatsSafe = internalMutation({

@@ -4,7 +4,35 @@ import { action } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { ConvexError } from "convex/values";
 
-// Fix stale cvStats — recomputes counts from actual CV records
+// Full reset — delete ALL CVs, all lookup entries, all import jobs, reset stats to zero
+export const fullReset = action({
+  args: {},
+  handler: async (ctx): Promise<{ message: string }> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
+
+    // Delete all CVs + lookups in passes of 50
+    let totalDeleted = 0;
+    for (let i = 0; i < 2000; i++) {
+      const result = await ctx.runMutation(internal.workable.cleanup.deleteAllCvsBatch, {});
+      totalDeleted += result.deleted;
+      if (result.deleted === 0) break;
+    }
+
+    // Delete all import jobs
+    for (let i = 0; i < 20; i++) {
+      const result = await ctx.runMutation(internal.workable.cleanup.deleteAllImportJobs, {});
+      if (result.deleted === 0) break;
+    }
+
+    // Zero out stats
+    await ctx.runMutation(internal.workable.cleanup.resetStats, {});
+
+    return { message: `Full reset complete. Deleted ${totalDeleted} CVs. Database is empty — ready for a fresh import.` };
+  },
+});
+
+
 export const fixStats = action({
   args: {},
   handler: async (ctx): Promise<{ message: string }> => {
