@@ -200,13 +200,23 @@ export const matchByJobDescription = action({
     jobRequirements: JobRequirements;
     matches: CandidateMatch[];
   }> => {
-    // Step 1: Parse JD into structured requirements
-    const parseResponse = await openai.chat.completions.create({
-      model: "openai/gpt-5-mini",
-      messages: [
-        {
-          role: "system",
-          content: `You are a job description parser. Extract structured hiring requirements from a job description.
+    // Run JD parsing and broad candidate fetch IN PARALLEL
+    // The broad fetch uses key terms extracted directly from the raw JD text
+    // to avoid waiting for the parse to complete before hitting the DB
+    const broadTerms = args.jobDescription
+      .split(/[\n,;]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 3 && s.length < 60)
+      .slice(0, 4);
+
+    const [parseResponse, ...broadSearches] = await Promise.all([
+      // AI: parse JD into structured requirements
+      openai.chat.completions.create({
+        model: "openai/gpt-5-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a job description parser. Extract structured hiring requirements from a job description.
 Return ONLY valid JSON with these fields (use null if not specified):
 {
   "title": "job title",
@@ -219,11 +229,16 @@ Return ONLY valid JSON with these fields (use null if not specified):
   "education": "required education level or null",
   "summary": "1 sentence describing this role and ideal candidate"
 }`,
-        },
-        { role: "user", content: args.jobDescription.slice(0, 6000) },
-      ],
-      response_format: { type: "json_object" },
-    });
+          },
+          { role: "user", content: args.jobDescription.slice(0, 6000) },
+        ],
+        response_format: { type: "json_object" },
+      }),
+      // DB: broad candidate fetches using raw JD terms (no waiting for parse)
+      ...broadTerms.map((term) =>
+        ctx.runQuery(api.cvs.searchCvs, { query: term, limit: 40 })
+      ),
+    ]);
 
     let jobReq: JobRequirements = {
       title: "Position",
@@ -254,29 +269,24 @@ Return ONLY valid JSON with these fields (use null if not specified):
       };
     } catch { /* keep defaults */ }
 
-    // Step 2: Retrieve candidates using multi-term search
-    const fetchLimit = (args.limit ?? 20) * 3;
-    const keyTerms = [
-      jobReq.title,
-      ...jobReq.requiredSkills.slice(0, 3),
-      jobReq.industry,
-    ].filter((t): t is string => Boolean(t));
-
-    const searchResults = await Promise.all(
-      keyTerms.slice(0, 4).map((term) =>
-        ctx.runQuery(api.cvs.searchCvs, {
-          query: term,
-          industry: jobReq.industry ?? undefined,
-          seniority: jobReq.seniority ?? undefined,
-          limit: fetchLimit,
-        })
-      )
+    // Merge broad results + do one targeted search now we know the parsed title/skills
+    const targetedSearches = await Promise.all(
+      [jobReq.title, ...jobReq.requiredSkills.slice(0, 2)]
+        .filter(Boolean)
+        .slice(0, 3)
+        .map((term) =>
+          ctx.runQuery(api.cvs.searchCvs, {
+            query: term,
+            industry: jobReq.industry ?? undefined,
+            seniority: jobReq.seniority ?? undefined,
+            limit: 40,
+          })
+        )
     );
 
-    // Merge and deduplicate
     const seen = new Set<string>();
-    const candidates: typeof searchResults[0] = [];
-    for (const batch of searchResults) {
+    const candidates: typeof broadSearches[0] = [];
+    for (const batch of [...broadSearches, ...targetedSearches]) {
       for (const cv of batch) {
         if (!seen.has(cv._id)) {
           seen.add(cv._id);
@@ -289,7 +299,8 @@ Return ONLY valid JSON with these fields (use null if not specified):
       return { jobRequirements: jobReq, matches: [] };
     }
 
-    // Step 3: AI scores each candidate with breakdown
+    // Compact candidate payload — summary + 300 chars of raw text (was 1000)
+    // Smaller payload = faster AI response
     const candidateSummaries = candidates.slice(0, 30).map((cv, i) => ({
       index: i,
       name: cv.candidateName ?? cv.fileName,
@@ -298,9 +309,9 @@ Return ONLY valid JSON with these fields (use null if not specified):
       seniority: cv.seniority ?? "",
       years: cv.yearsOfExperience ?? null,
       location: cv.location ?? "",
-      skills: cv.skills ?? [],
+      skills: (cv.skills ?? []).slice(0, 8).join(", "),
       summary: cv.summary ?? "",
-      rawTextSnippet: (cv.rawText ?? "").slice(0, 1000),
+      snippet: (cv.rawText ?? "").slice(0, 300),
     }));
 
     const scoreResponse = await openai.chat.completions.create({
@@ -395,13 +406,17 @@ export const aiSearch = action({
     interpretation: SearchInterpretation;
     results: { cvId: string; score: number; reason: string }[];
   }> => {
-    // Step 1: AI interprets the query
-    const interpretResponse = await openai.chat.completions.create({
-      model: "openai/gpt-5-mini",
-      messages: [
-        {
-          role: "system",
-          content: `You are a talent search assistant. Interpret the user's natural language search query for CV/resume matching.
+    const fetchLimit = (args.limit ?? 20) * 2;
+
+    // Run AI interpretation AND the raw-query DB fetch IN PARALLEL
+    // so we don't wait for AI before hitting the database
+    const [interpretResponse, rawQueryResults] = await Promise.all([
+      openai.chat.completions.create({
+        model: "openai/gpt-5-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a talent search assistant. Interpret the user's natural language search query for CV/resume matching.
 Return JSON with these fields:
 {
   "searchText": "optimized search string combining key skills, titles, industries, and any specific company names mentioned",
@@ -411,11 +426,14 @@ Return JSON with these fields:
   "interpretation": "one sentence describing what you are searching for e.g. 'Searching for senior FMCG professionals with supply chain experience and 5+ years'",
   "keywords": ["key1", "key2", ...] — IMPORTANT: always include any specific company names, brand names, or organizations mentioned in the query as individual keywords
 }`,
-        },
-        { role: "user", content: args.query },
-      ],
-      response_format: { type: "json_object" },
-    });
+          },
+          { role: "user", content: args.query },
+        ],
+        response_format: { type: "json_object" },
+      }),
+      // Start fetching with the original query immediately — no need to wait for AI
+      ctx.runQuery(api.cvs.searchCvs, { query: args.query, limit: fetchLimit }),
+    ]);
 
     let interp: SearchInterpretation = {
       searchText: args.query,
@@ -438,30 +456,25 @@ Return JSON with these fields:
       // keep defaults
     }
 
-    // Step 2: Run multiple text searches — AI-rewritten text, original query, and keywords
-    // This ensures specific company names / terms in the original query are not lost
-    const fetchLimit = (args.limit ?? 20) * 2;
-
-    const [rewrittenResults, originalResults, ...keywordResults] = await Promise.all([
-      ctx.runQuery(api.cvs.searchCvs, {
-        query: interp.searchText,
-        industry: interp.industry,
-        seniority: interp.seniority,
-        limit: fetchLimit,
-      }),
-      ctx.runQuery(api.cvs.searchCvs, {
-        query: args.query,
-        limit: fetchLimit,
-      }),
+    // Now fetch rewritten + keyword results (these need the parsed interp)
+    const additionalResults = await Promise.all([
+      interp.searchText !== args.query
+        ? ctx.runQuery(api.cvs.searchCvs, {
+            query: interp.searchText,
+            industry: interp.industry,
+            seniority: interp.seniority,
+            limit: fetchLimit,
+          })
+        : Promise.resolve([] as typeof rawQueryResults),
       ...interp.keywords.slice(0, 3).map((kw) =>
         ctx.runQuery(api.cvs.searchCvs, { query: kw, limit: 10 })
       ),
     ]);
 
-    // Merge and deduplicate, preserving order (rewritten first, then original, then keywords)
+    // Merge and deduplicate — original query results first (already fetched)
     const seen = new Set<string>();
-    const rawResults: typeof rewrittenResults = [];
-    for (const cv of [...rewrittenResults, ...originalResults, ...keywordResults.flat()]) {
+    const rawResults: typeof rawQueryResults = [];
+    for (const cv of [rawQueryResults, ...additionalResults].flat()) {
       if (!seen.has(cv._id)) {
         seen.add(cv._id);
         rawResults.push(cv);
@@ -472,7 +485,7 @@ Return JSON with these fields:
       return { interpretation: interp, results: [] };
     }
 
-    // Step 3: AI re-ranks results and provides per-candidate relevance reasons
+    // Compact payload: summary + 300 chars snippet (was 800) = faster AI response
     const candidateSummaries = rawResults.slice(0, 30).map((cv, i) => ({
       index: i,
       name: cv.candidateName ?? cv.fileName,
@@ -481,10 +494,9 @@ Return JSON with these fields:
       seniority: cv.seniority ?? "",
       years: cv.yearsOfExperience ?? null,
       location: cv.location ?? "",
-      skills: (cv.skills ?? []).slice(0, 10).join(", "),
+      skills: (cv.skills ?? []).slice(0, 8).join(", "),
       summary: cv.summary ?? "",
-      // Include first 800 chars of raw text so AI can verify company names and tenure
-      rawTextSnippet: (cv.rawText ?? "").slice(0, 800),
+      snippet: (cv.rawText ?? "").slice(0, 300),
     }));
 
     const rankResponse = await openai.chat.completions.create({
