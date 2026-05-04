@@ -270,11 +270,13 @@ export const runImportBatch = internalAction({
     nextUrl: v.optional(v.string()),
     imported: v.number(),
     skipped: v.number(),
+    deduplicated: v.number(),
     failed: v.number(),
   },
   handler: async (ctx, args): Promise<void> => {
     let imported = args.imported;
     let skipped = args.skipped;
+    let deduplicated = args.deduplicated;
     let failed = args.failed;
 
     // Check if import was stopped before processing this batch

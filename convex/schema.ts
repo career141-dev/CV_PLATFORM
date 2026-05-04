@@ -187,6 +187,7 @@ export default defineSchema({
     totalCandidates: v.number(),
     imported: v.number(),
     skipped: v.number(),
+    deduplicated: v.optional(v.number()),
     failed: v.number(),
     userId: v.id("users"),
     startedAt: v.string(),

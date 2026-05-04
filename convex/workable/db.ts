@@ -29,6 +29,7 @@ export const updateImportJob = internalMutation({
     importId: v.id("workableImports"),
     imported: v.optional(v.number()),
     skipped: v.optional(v.number()),
+    deduplicated: v.optional(v.number()),
     failed: v.optional(v.number()),
     totalCandidates: v.optional(v.number()),
     status: v.optional(
