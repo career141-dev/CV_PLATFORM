@@ -230,6 +230,15 @@ export const runImport = internalAction({
         // Fetch full candidate profile to get resume_url (not returned by list endpoint)
         const detail = await fetchCandidateDetail(args.subdomain, args.apiKey, candidate.id);
 
+        // Skip if already imported (deduplication)
+        const existing = await ctx.runQuery(internal.workable.db.findCvByWorkableId, {
+          workableCandidateId: candidate.id,
+        });
+        if (existing) {
+          skipped++;
+          continue;
+        }
+
         if (!detail.resume_url) {
           skipped++;
           continue;
@@ -265,6 +274,7 @@ export const runImport = internalAction({
           fileType: downloaded.fileType,
           fileSize: downloaded.buffer.byteLength,
           userId: args.userId,
+          workableCandidateId: candidate.id,
         });
 
         // Trigger async AI processing

@@ -56,6 +56,7 @@ export const insertCv = internalMutation({
     fileType: v.string(),
     fileSize: v.number(),
     userId: v.id("users"),
+    workableCandidateId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("cvs", {
@@ -65,6 +66,16 @@ export const insertCv = internalMutation({
       fileSize: args.fileSize,
       status: "uploading",
       uploadedBy: args.userId,
+      workableCandidateId: args.workableCandidateId,
     });
+  },
+});
+
+export const findCvByWorkableId = internalQuery({
+  args: { workableCandidateId: v.string() },
+  handler: async (ctx, args) => {
+    // Scan cvs for matching workableCandidateId — table is small enough and this avoids optional index
+    const all = await ctx.db.query("cvs").collect();
+    return all.find((cv) => cv.workableCandidateId === args.workableCandidateId) ?? null;
   },
 });

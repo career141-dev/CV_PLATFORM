@@ -108,6 +108,10 @@ export const processCv = action({
     fileType: v.string(),
   },
   handler: async (ctx, args): Promise<void> => {
+    // Guard: skip if already processed to avoid wasting AI credits on re-runs
+    const existing = await ctx.runQuery(api.cvs.getCv, { cvId: args.cvId });
+    if (existing?.status === "ready") return;
+
     // Mark as processing
     await ctx.runMutation(api.cvs.updateCvStatus, {
       cvId: args.cvId,

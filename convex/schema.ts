@@ -42,6 +42,9 @@ export default defineSchema({
 
     // Who uploaded
     uploadedBy: v.id("users"),
+
+    // Workable integration — used for deduplication
+    workableCandidateId: v.optional(v.string()),
   })
     .index("by_status", ["status"])
     .index("by_uploaded_by", ["uploadedBy"])
