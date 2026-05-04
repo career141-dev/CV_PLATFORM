@@ -3,6 +3,7 @@
 import { v } from "convex/values";
 import { action } from "./_generated/server";
 import { api } from "./_generated/api";
+import { ConvexError } from "convex/values";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -150,12 +151,38 @@ export const processCv = action({
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Processing failed";
+      // Detect insufficient balance (403) — pause instead of error so user can resume later
+      const isInsufficientBalance =
+        message.includes("403") ||
+        message.toLowerCase().includes("insufficient") ||
+        message.toLowerCase().includes("balance");
       await ctx.runMutation(api.cvs.updateCvStatus, {
         cvId: args.cvId,
-        status: "error",
-        errorMessage: message,
+        status: isInsufficientBalance ? "paused" : "error",
+        errorMessage: isInsufficientBalance
+          ? "Paused: insufficient AI credits. Top up your balance then click Resume."
+          : message,
       });
     }
+  },
+});
+
+export const resumeProcessing = action({
+  args: {},
+  handler: async (ctx): Promise<{ resumed: number }> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
+
+    const pausedCvs = await ctx.runQuery(api.cvs.getPausedCvs, {});
+    for (const cv of pausedCvs) {
+      // Re-queue each paused CV for processing
+      ctx.scheduler.runAfter(0, api.cvProcessing.processCv, {
+        cvId: cv._id,
+        storageId: cv.storageId,
+        fileType: cv.fileType,
+      });
+    }
+    return { resumed: pausedCvs.length };
   },
 });
 

@@ -1,16 +1,15 @@
 import { useState, useCallback } from "react";
 import { useDropzone } from "react-dropzone";
-import { useMutation, useAction } from "convex/react";
+import { useMutation, useAction, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import { Authenticated } from "convex/react";
 import AppLayout from "@/components/app-layout.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import { Progress } from "@/components/ui/progress.tsx";
 import { toast } from "sonner";
-import { Upload, FileText, CheckCircle, XCircle, Loader2, CloudUpload, X } from "lucide-react";
+import { Upload, FileText, CheckCircle, XCircle, Loader2, CloudUpload, X, PauseCircle, PlayCircle } from "lucide-react";
 import { cn } from "@/lib/utils.ts";
 
-type FileStatus = "pending" | "uploading" | "processing" | "done" | "error";
+type FileStatus = "pending" | "uploading" | "processing" | "done" | "error" | "paused";
 
 type UploadFile = {
   id: string;
@@ -31,10 +30,13 @@ function getFileType(file: File): string {
 function UploadContent() {
   const [files, setFiles] = useState<UploadFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [isResuming, setIsResuming] = useState(false);
 
   const generateUploadUrl = useMutation(api.cvs.generateUploadUrl);
   const createCv = useMutation(api.cvs.createCv);
   const processCv = useAction(api.cvProcessing.processCv);
+  const resumeProcessing = useAction(api.cvProcessing.resumeProcessing);
+  const pausedCvs = useQuery(api.cvs.getPausedCvs, {});
 
   const onDrop = useCallback((accepted: File[]) => {
     const newFiles: UploadFile[] = accepted.map((file) => ({
@@ -117,6 +119,22 @@ function UploadContent() {
     toast.success(`Started processing ${pending.length} file(s)`);
   };
 
+  const handleResume = async () => {
+    setIsResuming(true);
+    try {
+      const result = await resumeProcessing({});
+      if (result.resumed > 0) {
+        toast.success(`Resuming processing for ${result.resumed} paused CV${result.resumed !== 1 ? "s" : ""}`);
+      } else {
+        toast.info("No paused CVs to resume.");
+      }
+    } catch {
+      toast.error("Failed to resume processing. Please try again.");
+    } finally {
+      setIsResuming(false);
+    }
+  };
+
   const pendingCount = files.filter((f) => f.status === "pending").length;
   const doneCount = files.filter((f) => f.status === "done").length;
   const processingCount = files.filter((f) => f.status === "processing" || f.status === "uploading").length;
@@ -130,6 +148,29 @@ function UploadContent() {
           Upload PDF, Word, or text files. AI will extract and structure all candidate data automatically.
         </p>
       </div>
+
+      {/* Paused banner */}
+      {pausedCvs && pausedCvs.length > 0 && (
+        <div className="flex items-center justify-between gap-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-3 mb-6">
+          <div className="flex items-center gap-2 min-w-0">
+            <PauseCircle className="w-4 h-4 text-amber-500 shrink-0" />
+            <p className="text-sm text-amber-700 dark:text-amber-400">
+              <span className="font-semibold">{pausedCvs.length} CV{pausedCvs.length !== 1 ? "s" : ""} paused</span>
+              {" — "}AI credits ran out during processing. Top up your balance in{" "}
+              <strong>Settings → Billing → Cloud Usage</strong>, then click Resume.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            onClick={handleResume}
+            disabled={isResuming}
+            className="shrink-0 gap-1.5 bg-amber-500 hover:bg-amber-600 text-white"
+          >
+            {isResuming ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />}
+            Resume
+          </Button>
+        </div>
+      )}
 
       {/* Drop zone */}
       <div
@@ -234,6 +275,12 @@ function StatusBadge({ status }: { status: FileStatus }) {
       return (
         <span className="flex items-center gap-1 text-xs text-destructive">
           <XCircle className="w-3 h-3" /> Error
+        </span>
+      );
+    case "paused":
+      return (
+        <span className="flex items-center gap-1 text-xs text-amber-500">
+          <PauseCircle className="w-3 h-3" /> Paused
         </span>
       );
   }

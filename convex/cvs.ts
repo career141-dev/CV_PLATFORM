@@ -46,7 +46,8 @@ export const updateCvStatus = mutation({
       v.literal("uploading"),
       v.literal("processing"),
       v.literal("ready"),
-      v.literal("error")
+      v.literal("error"),
+      v.literal("paused")
     ),
     errorMessage: v.optional(v.string()),
   },
@@ -55,6 +56,18 @@ export const updateCvStatus = mutation({
       status: args.status,
       errorMessage: args.errorMessage,
     });
+  },
+});
+
+export const getPausedCvs = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    return await ctx.db
+      .query("cvs")
+      .withIndex("by_status", (q) => q.eq("status", "paused"))
+      .collect();
   },
 });
 
@@ -115,12 +128,14 @@ export const getStats = query({
     const ready = all.filter((c) => c.status === "ready");
     const processing = all.filter((c) => c.status === "processing" || c.status === "uploading");
     const errors = all.filter((c) => c.status === "error");
+    const paused = all.filter((c) => c.status === "paused");
 
     return {
       total: all.length,
       ready: ready.length,
       processing: processing.length,
       errors: errors.length,
+      paused: paused.length,
     };
   },
 });

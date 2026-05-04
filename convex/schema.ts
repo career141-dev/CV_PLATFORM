@@ -35,7 +35,8 @@ export default defineSchema({
       v.literal("uploading"),
       v.literal("processing"),
       v.literal("ready"),
-      v.literal("error")
+      v.literal("error"),
+      v.literal("paused")
     ),
     errorMessage: v.optional(v.string()),
 
