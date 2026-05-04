@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useAction, useQuery } from "convex/react";
+import { useAction } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import { Authenticated } from "convex/react";
 import AppLayout from "@/components/app-layout.tsx";
@@ -7,18 +7,17 @@ import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { toast } from "sonner";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import {
   Building2, Key, CheckCircle2, AlertCircle, Loader2,
-  Download, SkipForward, XCircle, ArrowRight,
-  ExternalLink, Info, Play, RotateCcw,
+  SkipForward, XCircle, ExternalLink, Info, RotateCcw, Play,
 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel.js";
 import { cn } from "@/lib/utils.ts";
 
 type ImportStatus = {
   _id: Id<"workableImports">;
-  status: "running" | "done" | "error" | "paused";
+  status: "running" | "done" | "error";
   totalCandidates: number;
   imported: number;
   skipped: number;
@@ -47,13 +46,13 @@ function StatBox({ label, value, icon: Icon, color }: {
   label: string; value: number; icon: React.ElementType; color: string;
 }) {
   return (
-    <div className="bg-card border rounded-xl p-4 flex items-center gap-3">
+    <div className="bg-muted/30 border rounded-xl p-4 flex items-center gap-3">
       <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center shrink-0", color)}>
         <Icon className="w-4 h-4" />
       </div>
       <div>
-        <p className="text-xl font-bold leading-none">{value}</p>
-        <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
+        <p className="text-xl font-bold tabular-nums">{value.toLocaleString()}</p>
+        <p className="text-xs text-muted-foreground">{label}</p>
       </div>
     </div>
   );
@@ -72,112 +71,110 @@ function ImportContent() {
 
   const testConnection = useAction(api.workable.actions.testConnection);
   const startBulkImport = useAction(api.workable.actions.startBulkImport);
-  const getImportStatus = useAction(api.workable.actions.getImportStatus);
   const getLatestImportStatus = useAction(api.workable.actions.getLatestImportStatus);
-  const resumeImport = useAction(api.workable.actions.resumeImport);
-  const resumeProcessing = useAction(api.cvProcessing.resumeProcessing);
-  const pausedCvs = useQuery(api.cvs.getPausedCvs, {});
+  const getImportStatus = useAction(api.workable.actions.getImportStatus);
+  const retryImport = useAction(api.workable.actions.retryImport);
+  const runCleanup = useAction(api.workable.cleanupAction.runCleanup);
 
-  // On mount: restore any existing import session
+  // Restore last import on mount
   useEffect(() => {
-    let cancelled = false;
-    getLatestImportStatus({}).then((latest) => {
-      if (cancelled) return;
-      if (latest) {
-        setImportId(latest._id);
-        setImportStatus(latest);
-        if (latest.status === "running") {
-          setIsImporting(true);
+    getLatestImportStatus()
+      .then((status) => {
+        if (status) {
+          setImportStatus(status as ImportStatus);
+          setImportId(status._id);
+          if (status.subdomain) setSubdomain(status.subdomain);
+          if (status.status === "running") startPolling(status._id);
         }
-      }
-      setIsRestoring(false);
-    }).catch(() => {
-      if (!cancelled) setIsRestoring(false);
-    });
-    return () => { cancelled = true; };
+      })
+      .finally(() => setIsRestoring(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Poll import status while running
-  useEffect(() => {
-    if (!importId) return;
+  const startPolling = (id: Id<"workableImports">) => {
+    if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
-      const status = await getImportStatus({ importId });
+      const status = await getImportStatus({ importId: id });
       if (status) {
-        setImportStatus(status);
+        setImportStatus(status as ImportStatus);
         if (status.status !== "running") {
           clearInterval(pollRef.current!);
+          pollRef.current = null;
           setIsImporting(false);
-          if (status.status === "done") {
-            toast.success(`Import complete! ${status.imported} CVs imported.`);
-          } else if (status.status === "paused") {
-            toast.warning(`Import paused: ${status.errorMessage ?? "Rate limit hit. Click Resume Import to continue."}`);
-          } else {
-            toast.error(`Import failed: ${status.errorMessage ?? "Unknown error"}`);
-          }
         }
       }
     }, 3000);
-    return () => clearInterval(pollRef.current!);
-  }, [importId]);
+  };
 
-  const handleTest = async () => {
-    if (!subdomain.trim() || !apiKey.trim()) {
-      toast.error("Please enter both your Workable subdomain and API key");
-      return;
-    }
+  useEffect(() => {
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
+
+  const handleTestConnection = async () => {
+    if (!subdomain || !apiKey) return toast.error("Please enter both subdomain and API key");
     setIsTesting(true);
-    setIsConnected(false);
     try {
-      const result = await testConnection({ subdomain: subdomain.trim(), apiKey: apiKey.trim() });
+      const result = await testConnection({ subdomain, apiKey });
       if (result.ok) {
         setIsConnected(true);
         toast.success("Connected to Workable successfully!");
       } else {
-        toast.error(`Connection failed: ${result.error ?? "Check your credentials and try again."}`);
+        toast.error(result.error ?? "Connection failed");
       }
-    } catch {
-      toast.error("Connection test failed. Check your credentials.");
     } finally {
       setIsTesting(false);
     }
   };
 
-  const handleImport = async () => {
-    if (!isConnected) {
-      toast.error("Please test the connection first");
-      return;
-    }
+  const handleStartImport = async () => {
+    if (!subdomain || !apiKey) return toast.error("Please enter both subdomain and API key");
     setIsImporting(true);
     try {
-      const result = await startBulkImport({ subdomain: subdomain.trim(), apiKey: apiKey.trim() });
-      setImportId(result.importId as Id<"workableImports">);
-      toast.info("Import started! CVs are being downloaded and processed in the background.");
+      const { importId: newId } = await startBulkImport({ subdomain, apiKey });
+      const id = newId as Id<"workableImports">;
+      setImportId(id);
+      setImportStatus({
+        _id: id,
+        status: "running",
+        totalCandidates: 0,
+        imported: 0,
+        skipped: 0,
+        failed: 0,
+        startedAt: new Date().toISOString(),
+        subdomain,
+      });
+      startPolling(id);
+      toast.success("Import started! Processing candidates in the background.");
     } catch (err) {
-      toast.error("Failed to start import. Please try again.");
+      toast.error(err instanceof Error ? err.message : "Failed to start import");
       setIsImporting(false);
     }
   };
 
-  const handleResume = async () => {
-    try {
-      await resumeProcessing({});
-      toast.success("Resuming CV processing — paused CVs will become searchable shortly.");
-    } catch {
-      toast.error("Failed to resume processing. Please try again.");
-    }
-  };
-
-  const handleResumeImport = async () => {
+  const handleRetry = async () => {
     if (!importStatus) return;
     setIsImporting(true);
     try {
-      await resumeImport({ importId: importStatus._id, subdomain, apiKey });
-      setImportStatus((prev) => prev ? { ...prev, status: "running" } : prev);
-      toast.info("Import resumed from where it left off.");
+      await retryImport({ importId: importStatus._id, subdomain, apiKey });
+      setImportStatus((prev) => prev ? { ...prev, status: "running", errorMessage: "" } : prev);
+      startPolling(importStatus._id);
+      toast.info("Import retrying from where it left off.");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to resume import";
+      const msg = err instanceof Error ? err.message : "Failed to retry";
       toast.error(msg);
       setIsImporting(false);
+    }
+  };
+
+  const handleCleanup = async () => {
+    if (!confirm("This will permanently delete all non-ready CVs and import history. Are you sure?")) return;
+    try {
+      const result = await runCleanup();
+      toast.success(result.message);
+      setImportStatus(null);
+      setImportId(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Cleanup failed");
     }
   };
 
@@ -186,17 +183,16 @@ function ImportContent() {
     : 0;
 
   return (
-    <div className="p-4 md:p-6 max-w-2xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold mb-1">Import from Workable</h1>
-        <p className="text-muted-foreground text-sm">
+    <div className="max-w-2xl mx-auto p-6 space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Import from Workable</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           Bulk import all your existing candidates and their CVs from Workable into this system.
         </p>
       </div>
 
-      {/* Loading state while restoring session */}
       {isRestoring && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="w-4 h-4 animate-spin" />
           Checking import status...
         </div>
@@ -204,32 +200,8 @@ function ImportContent() {
 
       {!isRestoring && (
         <>
-          {/* Paused CVs banner */}
-          {pausedCvs && pausedCvs.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="flex items-center justify-between gap-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4 mb-6"
-            >
-              <div className="flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
-                    {pausedCvs.length} CV{pausedCvs.length !== 1 ? "s" : ""} paused — ready to resume
-                  </p>
-                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
-                    These CVs already have their raw text extracted. Click Resume to mark them as searchable — no AI credits required.
-                  </p>
-                </div>
-              </div>
-              <Button size="sm" onClick={handleResume} className="gap-1.5 shrink-0">
-                <Play className="w-3.5 h-3.5" /> Resume
-              </Button>
-            </motion.div>
-          )}
-
           {/* How it works */}
-          <div className="bg-accent/30 border border-accent rounded-xl p-4 mb-6">
+          <div className="bg-accent/30 border border-accent rounded-xl p-4">
             <p className="text-sm font-medium flex items-center gap-2 mb-2">
               <Info className="w-4 h-4 text-primary shrink-0" />
               How this works
@@ -237,7 +209,7 @@ function ImportContent() {
             <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside">
               <li>We connect to your Workable account using your API key</li>
               <li>All candidates with a CV/resume attached are downloaded</li>
-              <li>Each CV text is extracted and stored — ready for search immediately</li>
+              <li>Each CV is extracted and fully processed with AI — name, skills, experience, and more</li>
               <li>Once done, candidates become searchable in this system</li>
             </ol>
             <a
@@ -250,226 +222,199 @@ function ImportContent() {
             </a>
           </div>
 
-          {/* Credentials form */}
-          <div className="bg-card border rounded-xl p-5 mb-6 space-y-4">
+          {/* Credentials */}
+          <div className="bg-card border rounded-xl p-5 space-y-4">
             <div>
-              <label className="text-sm font-medium flex items-center gap-1.5 mb-1.5">
-                <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
-                Workable subdomain
+              <label className="text-sm font-medium flex items-center gap-2 mb-1.5">
+                <Building2 className="w-4 h-4 text-muted-foreground" /> Workable subdomain
               </label>
-              <div className="flex items-center gap-0">
+              <div className="flex gap-2">
                 <Input
                   value={subdomain}
                   onChange={(e) => { setSubdomain(e.target.value); setIsConnected(false); }}
                   placeholder="mycompany"
-                  className="rounded-r-none border-r-0 text-sm"
+                  className="flex-1"
                 />
-                <span className="h-9 px-3 bg-muted border rounded-r-md text-xs text-muted-foreground flex items-center shrink-0">
+                <span className="flex items-center text-sm text-muted-foreground bg-muted px-3 rounded-md border whitespace-nowrap">
                   .workable.com
                 </span>
               </div>
               <p className="text-xs text-muted-foreground mt-1">
-                If your Workable URL is <span className="font-mono">mycompany.workable.com</span>, enter <span className="font-mono">mycompany</span>
+                If your Workable URL is <code>mycompany.workable.com</code>, enter <code>mycompany</code>
               </p>
             </div>
 
             <div>
-              <label className="text-sm font-medium flex items-center gap-1.5 mb-1.5">
-                <Key className="w-3.5 h-3.5 text-muted-foreground" />
-                API key
+              <label className="text-sm font-medium flex items-center gap-2 mb-1.5">
+                <Key className="w-4 h-4 text-muted-foreground" /> API key
               </label>
               <Input
+                type="password"
                 value={apiKey}
                 onChange={(e) => { setApiKey(e.target.value); setIsConnected(false); }}
                 placeholder="your-workable-api-key"
-                type="password"
-                className="text-sm font-mono"
               />
               <p className="text-xs text-muted-foreground mt-1">
                 Found in Workable under Settings → Integrations → API Access Tokens
               </p>
             </div>
 
-            <div className="flex items-center gap-2 pt-1">
+            <div className="flex items-center gap-3 pt-1">
               <Button
                 variant="secondary"
-                onClick={handleTest}
+                onClick={handleTestConnection}
                 disabled={isTesting || !subdomain || !apiKey}
                 className="gap-2"
               >
-                {isTesting ? (
-                  <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Testing...</>
-                ) : isConnected ? (
-                  <><CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> Connected</>
-                ) : (
-                  "Test connection"
-                )}
+                {isTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                Test connection
               </Button>
-
               {isConnected && (
-                <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}>
-                  <Badge variant="secondary" className="text-green-600 dark:text-green-400 gap-1">
-                    <CheckCircle2 className="w-3 h-3" /> Ready to import
-                  </Badge>
-                </motion.div>
+                <span className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
+                  <CheckCircle2 className="w-4 h-4" /> Connected
+                </span>
+              )}
+              {isConnected && !importStatus?.status && (
+                <span className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
+                  <CheckCircle2 className="w-4 h-4" /> Ready to import
+                </span>
               )}
             </div>
           </div>
 
           {/* Start import button */}
-          <AnimatePresence>
-            {isConnected && !importId && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                className="mb-6"
-              >
-                <Button
-                  onClick={handleImport}
-                  disabled={isImporting}
-                  size="lg"
-                  className="w-full gap-2"
-                >
-                  {isImporting ? (
-                    <><Loader2 className="w-4 h-4 animate-spin" /> Starting import...</>
-                  ) : (
-                    <><Download className="w-4 h-4" /> Start bulk import from Workable</>
-                  )}
-                </Button>
-                <p className="text-xs text-center text-muted-foreground mt-2">
-                  This runs in the background — you can leave this page and check back later.
-                </p>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {isConnected && !importStatus && (
+            <Button
+              className="w-full gap-2"
+              size="lg"
+              onClick={handleStartImport}
+              disabled={isImporting}
+            >
+              {isImporting ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Starting...</>
+              ) : (
+                <><Play className="w-4 h-4" /> Start Import</>
+              )}
+            </Button>
+          )}
 
           {/* Import progress */}
-          <AnimatePresence>
-            {importStatus && (
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-card border rounded-xl p-5"
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="font-semibold text-sm">Import progress</h2>
-                  {importStatus.status === "running" && (
-                    <Badge variant="secondary" className="gap-1 text-xs">
-                      <Loader2 className="w-3 h-3 animate-spin" /> Running
-                    </Badge>
-                  )}
-                  {importStatus.status === "done" && (
-                    <Badge variant="secondary" className="gap-1 text-xs text-green-600 dark:text-green-400">
-                      <CheckCircle2 className="w-3 h-3" /> Complete
-                    </Badge>
-                  )}
-                  {importStatus.status === "error" && (
-                    <Badge variant="destructive" className="gap-1 text-xs">
-                      <AlertCircle className="w-3 h-3" /> Error
-                    </Badge>
-                  )}
-                  {importStatus.status === "paused" && (
-                    <Badge variant="secondary" className="gap-1 text-xs text-amber-600 dark:text-amber-400">
-                      <AlertCircle className="w-3 h-3" /> Paused
-                    </Badge>
-                  )}
-                </div>
-
-                {importStatus.totalCandidates > 0 && (
-                  <div className="mb-4">
-                    <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
-                      <span>Overall progress</span>
-                      <span>{totalProcessed} / {importStatus.totalCandidates}</span>
-                    </div>
-                    <ProgressBar
-                      value={totalProcessed}
-                      max={importStatus.totalCandidates}
-                      color="bg-primary"
-                    />
-                  </div>
+          {importStatus && (
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-card border rounded-xl p-5"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="font-semibold text-sm">Import progress</h2>
+                {importStatus.status === "running" && (
+                  <Badge variant="secondary" className="gap-1 text-xs">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Running
+                  </Badge>
                 )}
-
-                <div className="grid grid-cols-3 gap-3 mb-4">
-                  <StatBox
-                    label="Imported"
-                    value={importStatus.imported}
-                    icon={CheckCircle2}
-                    color="bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400"
-                  />
-                  <StatBox
-                    label="Skipped (no CV)"
-                    value={importStatus.skipped}
-                    icon={SkipForward}
-                    color="bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400"
-                  />
-                  <StatBox
-                    label="Failed"
-                    value={importStatus.failed}
-                    icon={XCircle}
-                    color="bg-red-100 dark:bg-red-900/30 text-red-500"
-                  />
-                </div>
-
-                {!!importStatus.errorMessage && importStatus.status !== "running" && (
-                  <div className="flex items-start gap-2 bg-destructive/10 border border-destructive/20 rounded-lg p-3 text-xs text-destructive">
-                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                    {importStatus.errorMessage}
-                  </div>
-                )}
-
-                {/* Resume Import button for paused/error state */}
-                {(importStatus.status === "paused" || importStatus.status === "error") && (
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="mt-4 pt-4 border-t flex items-center justify-between gap-3"
-                  >
-                    <div>
-                      <p className="text-sm font-medium">
-                        {importStatus.status === "paused" ? "Import paused" : "Import stopped"}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {importStatus.lastCursor
-                          ? "Resuming will continue from where it left off — no duplicates, no restarting from scratch."
-                          : "No progress was saved. Resume will restart from the beginning (deduplication will skip already-imported CVs)."}
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      onClick={handleResumeImport}
-                      disabled={isImporting}
-                      className="gap-1.5 shrink-0"
-                    >
-                      {isImporting ? (
-                        <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Resuming...</>
-                      ) : (
-                        <><RotateCcw className="w-3.5 h-3.5" /> Resume Import</>
-                      )}
-                    </Button>
-                  </motion.div>
-                )}
-
                 {importStatus.status === "done" && (
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="mt-4 pt-4 border-t flex items-center justify-between"
-                  >
-                    <p className="text-sm text-muted-foreground">
-                      CVs are now processing in the background — they will appear in Search once ready.
-                    </p>
-                    <a
-                      href="/search"
-                      className="inline-flex items-center gap-1.5 text-sm text-primary font-medium hover:underline shrink-0"
-                    >
-                      Go to Search <ArrowRight className="w-3.5 h-3.5" />
-                    </a>
-                  </motion.div>
+                  <Badge variant="secondary" className="gap-1 text-xs text-green-600 dark:text-green-400">
+                    <CheckCircle2 className="w-3 h-3" /> Complete
+                  </Badge>
                 )}
-              </motion.div>
-            )}
-          </AnimatePresence>
+                {importStatus.status === "error" && (
+                  <Badge variant="destructive" className="gap-1 text-xs">
+                    <AlertCircle className="w-3 h-3" /> Error
+                  </Badge>
+                )}
+              </div>
+
+              {importStatus.totalCandidates > 0 && (
+                <div className="mb-4">
+                  <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
+                    <span>Overall progress</span>
+                    <span>{totalProcessed.toLocaleString()} / {importStatus.totalCandidates.toLocaleString()}</span>
+                  </div>
+                  <ProgressBar value={totalProcessed} max={importStatus.totalCandidates} color="bg-primary" />
+                </div>
+              )}
+
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                <StatBox
+                  label="Imported"
+                  value={importStatus.imported}
+                  icon={CheckCircle2}
+                  color="bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400"
+                />
+                <StatBox
+                  label="Skipped (no CV)"
+                  value={importStatus.skipped}
+                  icon={SkipForward}
+                  color="bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400"
+                />
+                <StatBox
+                  label="Failed"
+                  value={importStatus.failed}
+                  icon={XCircle}
+                  color="bg-red-100 dark:bg-red-900/30 text-red-500"
+                />
+              </div>
+
+              {!!importStatus.errorMessage && importStatus.status === "error" && (
+                <div className="flex items-start gap-2 bg-destructive/10 border border-destructive/20 rounded-lg p-3 text-xs text-destructive mb-4">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  {importStatus.errorMessage}
+                </div>
+              )}
+
+              {importStatus.status === "error" && (
+                <div className="pt-3 border-t flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium">Import stopped</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {importStatus.lastCursor
+                        ? "Will continue from where it stopped — no duplicates."
+                        : "Will restart from the beginning (already-imported CVs will be skipped)."}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={handleRetry}
+                    disabled={isImporting}
+                    className="gap-1.5 shrink-0"
+                  >
+                    {isImporting ? (
+                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Retrying...</>
+                    ) : (
+                      <><RotateCcw className="w-3.5 h-3.5" /> Retry Import</>
+                    )}
+                  </Button>
+                </div>
+              )}
+
+              {importStatus.status === "done" && (
+                <div className="pt-3 border-t text-center">
+                  <p className="text-sm text-muted-foreground">
+                    Import complete. {importStatus.imported.toLocaleString()} CVs imported successfully.
+                  </p>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => { setImportStatus(null); setImportId(null); }}
+                  >
+                    Start new import
+                  </Button>
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {/* Danger zone — cleanup */}
+          <div className="border border-destructive/30 rounded-xl p-4">
+            <p className="text-sm font-medium text-destructive mb-1">Danger zone</p>
+            <p className="text-xs text-muted-foreground mb-3">
+              Delete all non-ready CVs (processing, paused, error) and clear import history. Ready/processed CVs are kept.
+            </p>
+            <Button variant="secondary" size="sm" onClick={handleCleanup} className="text-destructive border-destructive/40 gap-2">
+              <AlertCircle className="w-3.5 h-3.5" /> Clean up non-ready CVs
+            </Button>
+          </div>
         </>
       )}
     </div>
@@ -478,10 +423,10 @@ function ImportContent() {
 
 export default function WorkableImportPage() {
   return (
-    <Authenticated>
-      <AppLayout>
+    <AppLayout>
+      <Authenticated>
         <ImportContent />
-      </AppLayout>
-    </Authenticated>
+      </Authenticated>
+    </AppLayout>
   );
 }

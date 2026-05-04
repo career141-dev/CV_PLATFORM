@@ -32,10 +32,12 @@ export const updateImportJob = internalMutation({
     failed: v.optional(v.number()),
     totalCandidates: v.optional(v.number()),
     status: v.optional(
-      v.union(v.literal("running"), v.literal("done"), v.literal("error"), v.literal("paused"))
+      v.union(v.literal("running"), v.literal("done"), v.literal("error"))
     ),
     errorMessage: v.optional(v.string()),
     lastCursor: v.optional(v.string()),
+    subdomain: v.optional(v.string()),
+    apiKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { importId, ...rest } = args;
@@ -74,7 +76,6 @@ export const insertCv = internalMutation({
       workableCandidateId: args.workableCandidateId,
     });
 
-    // Update stats counter
     const stats = await ctx.db.query("cvStats").first();
     if (stats) {
       await ctx.db.patch(stats._id, {
@@ -85,7 +86,6 @@ export const insertCv = internalMutation({
       await ctx.db.insert("cvStats", { total: 1, ready: 0, processing: 1, errors: 0, paused: 0 });
     }
 
-    // Register in the dedup lookup table
     if (args.workableCandidateId) {
       await ctx.db.insert("workableCandidateLookup", {
         workableCandidateId: args.workableCandidateId,
@@ -100,17 +100,13 @@ export const insertCv = internalMutation({
 export const getLatestImportJob = internalQuery({
   args: {},
   handler: async (ctx) => {
-    return await ctx.db
-      .query("workableImports")
-      .order("desc")
-      .first();
+    return await ctx.db.query("workableImports").order("desc").first();
   },
 });
 
 export const findCvByWorkableId = internalQuery({
   args: { workableCandidateId: v.string() },
   handler: async (ctx, args) => {
-    // Fast indexed lookup — no full table scan
     const entry = await ctx.db
       .query("workableCandidateLookup")
       .withIndex("by_workable_candidate_id", (q) =>

@@ -183,7 +183,7 @@ export default defineSchema({
     .index("by_job_and_stage", ["jobId", "stage"]),
 
   workableImports: defineTable({
-    status: v.union(v.literal("running"), v.literal("done"), v.literal("error"), v.literal("paused")),
+    status: v.union(v.literal("running"), v.literal("done"), v.literal("error")),
     totalCandidates: v.number(),
     imported: v.number(),
     skipped: v.number(),
@@ -191,9 +191,9 @@ export default defineSchema({
     userId: v.id("users"),
     startedAt: v.string(),
     errorMessage: v.optional(v.string()),
-    // Pagination cursor — saved after each page so import can resume from here
+    // Pagination cursor — saved after each page so import can retry from here
     lastCursor: v.optional(v.string()),
-    // Workable credentials stored for resume (encrypted in transit, stored as secrets ideally)
+    // Workable credentials stored for retry
     subdomain: v.optional(v.string()),
     apiKey: v.optional(v.string()),
   }).index("by_user", ["userId"]),

@@ -15,6 +15,8 @@ import type * as pipeline from "../pipeline.js";
 import type * as searchHistory from "../searchHistory.js";
 import type * as users from "../users.js";
 import type * as workable_actions from "../workable/actions.js";
+import type * as workable_cleanup from "../workable/cleanup.js";
+import type * as workable_cleanupAction from "../workable/cleanupAction.js";
 import type * as workable_db from "../workable/db.js";
 
 import type {
@@ -31,6 +33,8 @@ declare const fullApi: ApiFromModules<{
   searchHistory: typeof searchHistory;
   users: typeof users;
   "workable/actions": typeof workable_actions;
+  "workable/cleanup": typeof workable_cleanup;
+  "workable/cleanupAction": typeof workable_cleanupAction;
   "workable/db": typeof workable_db;
 }>;
 

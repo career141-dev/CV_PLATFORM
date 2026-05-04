@@ -12,14 +12,6 @@ function workableUrl(subdomain: string, path: string) {
   return `https://${subdomain}.workable.com/spi/v3${path}`;
 }
 
-type WorkableCandidate = {
-  id: string;
-  name: string;
-  email?: string;
-  phone?: string;
-  resume_url?: string;
-};
-
 type WorkableCandidateDetail = {
   candidate: {
     id: string;
@@ -27,23 +19,15 @@ type WorkableCandidateDetail = {
     email?: string;
     phone?: string;
     resume_url?: string;
-    // Workable sometimes nests resume under resume object
-    resume?: {
-      url?: string;
-      file_url?: string;
-    };
-    // Sometimes appears directly as attachments
+    resume?: { url?: string; file_url?: string };
     attachments?: Array<{ url?: string; file_url?: string; type?: string }>;
   };
 };
 
 function extractResumeUrl(detail: WorkableCandidateDetail["candidate"]): string | undefined {
-  // Try direct resume_url first
   if (detail.resume_url) return detail.resume_url;
-  // Try nested resume object
   if (detail.resume?.url) return detail.resume.url;
   if (detail.resume?.file_url) return detail.resume.file_url;
-  // Try attachments array — look for resume type
   const resumeAttachment = detail.attachments?.find(
     (a) => !a.type || a.type === "resume" || a.type === "cv"
   );
@@ -52,58 +36,44 @@ function extractResumeUrl(detail: WorkableCandidateDetail["candidate"]): string 
   return undefined;
 }
 
+type WorkableCandidatesPage = {
+  candidates: Array<{ id: string; name: string }>;
+  paging?: { next?: string };
+};
+
+async function fetchPage(
+  subdomain: string,
+  apiKey: string,
+  nextUrl?: string
+): Promise<WorkableCandidatesPage> {
+  const url = nextUrl ?? workableUrl(subdomain, "/candidates?limit=20");
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
+  if (res.status === 429) throw new Error("RATE_LIMIT_429");
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Workable API ${res.status}: ${text.slice(0, 200)}`);
+  }
+  return res.json() as Promise<WorkableCandidatesPage>;
+}
+
 async function fetchCandidateDetail(
   subdomain: string,
   apiKey: string,
   candidateId: string
-): Promise<WorkableCandidate> {
-  // Base delay between calls to respect Workable rate limits (~1 req/s)
-  await new Promise((resolve) => setTimeout(resolve, 600));
+): Promise<{ resumeUrl?: string; name: string; email?: string; phone?: string }> {
+  // Respect Workable rate limit (~1 req/s)
+  await new Promise((r) => setTimeout(r, 700));
   const url = workableUrl(subdomain, `/candidates/${candidateId}`);
-
-  // Retry up to 3 times on 429
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (res.status === 429) {
-      // Back off 5s on rate limit then retry
-      await new Promise((resolve) => setTimeout(resolve, 5000));
-      continue;
-    }
-    if (!res.ok) return { id: candidateId, name: candidateId };
-    const data = (await res.json()) as WorkableCandidateDetail;
-    return {
-      id: data.candidate.id,
-      name: data.candidate.name,
-      email: data.candidate.email,
-      phone: data.candidate.phone,
-      resume_url: extractResumeUrl(data.candidate),
-    };
-  }
-  // All retries exhausted — skip this candidate
-  return { id: candidateId, name: candidateId };
-}
-
-type WorkableCandidatesResponse = {
-  candidates: WorkableCandidate[];
-  paging?: { next?: string };
-};
-
-async function fetchCandidatesPage(
-  subdomain: string,
-  apiKey: string,
-  nextUrl?: string
-): Promise<WorkableCandidatesResponse> {
-  const url = nextUrl ?? workableUrl(subdomain, "/candidates?limit=10");
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Workable API ${res.status}: ${text.slice(0, 300)}`);
-  }
-  return res.json() as Promise<WorkableCandidatesResponse>;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
+  if (res.status === 429) throw new Error("RATE_LIMIT_429");
+  if (!res.ok) return { name: candidateId };
+  const data = (await res.json()) as WorkableCandidateDetail;
+  return {
+    name: data.candidate.name,
+    email: data.candidate.email,
+    phone: data.candidate.phone,
+    resumeUrl: extractResumeUrl(data.candidate),
+  };
 }
 
 async function downloadResume(
@@ -117,8 +87,7 @@ async function downloadResume(
       contentType.includes("pdf") ? "pdf" :
       contentType.includes("word") || contentType.includes("docx") ? "docx" :
       "pdf";
-    const buffer = await res.arrayBuffer();
-    return { buffer, contentType, fileType };
+    return { buffer: await res.arrayBuffer(), contentType, fileType };
   } catch {
     return null;
   }
@@ -127,13 +96,10 @@ async function downloadResume(
 // ─── Test connection ──────────────────────────────────────────────────────────
 
 export const testConnection = action({
-  args: {
-    subdomain: v.string(),
-    apiKey: v.string(),
-  },
+  args: { subdomain: v.string(), apiKey: v.string() },
   handler: async (_ctx, args): Promise<{ ok: boolean; error?: string }> => {
     try {
-      await fetchCandidatesPage(args.subdomain, args.apiKey);
+      await fetchPage(args.subdomain, args.apiKey);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : "Connection failed" };
@@ -141,13 +107,10 @@ export const testConnection = action({
   },
 });
 
-// ─── Start bulk import (public action) ───────────────────────────────────────
+// ─── Start bulk import ────────────────────────────────────────────────────────
 
 export const startBulkImport = action({
-  args: {
-    subdomain: v.string(),
-    apiKey: v.string(),
-  },
+  args: { subdomain: v.string(), apiKey: v.string() },
   handler: async (ctx, args): Promise<{ importId: string }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
@@ -164,7 +127,7 @@ export const startBulkImport = action({
       apiKey: args.apiKey,
     });
 
-    ctx.scheduler.runAfter(0, internal.workable.actions.runImport, {
+    ctx.scheduler.runAfter(0, internal.workable.actions.runImportBatch, {
       importId,
       subdomain: args.subdomain,
       apiKey: args.apiKey,
@@ -179,68 +142,19 @@ export const startBulkImport = action({
   },
 });
 
-// ─── Resume import from last saved cursor ────────────────────────────────────
-
-export const resumeImport = action({
-  args: {
-    importId: v.id("workableImports"),
-    subdomain: v.optional(v.string()),
-    apiKey: v.optional(v.string()),
-  },
-  handler: async (ctx, args): Promise<void> => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
-
-    const job = await ctx.runQuery(internal.workable.db.getImportJob, { importId: args.importId });
-    if (!job) throw new ConvexError({ message: "Import job not found", code: "NOT_FOUND" });
-
-    // Use provided credentials, or fall back to stored ones
-    const subdomain = args.subdomain ?? job.subdomain;
-    const apiKey = args.apiKey ?? job.apiKey;
-    if (!subdomain || !apiKey) {
-      throw new ConvexError({ message: "Please enter your Workable subdomain and API key to resume.", code: "BAD_REQUEST" });
-    }
-
-    const user = await ctx.runQuery(api.users.getUserByToken, {
-      tokenIdentifier: identity.tokenIdentifier,
-    });
-    if (!user) throw new ConvexError({ message: "User not found", code: "NOT_FOUND" });
-
-    // Mark as running again and clear any previous error message
-    await ctx.runMutation(internal.workable.db.updateImportJob, {
-      importId: args.importId,
-      status: "running",
-      errorMessage: "",
-    });
-
-    // Resume from last saved cursor (or from beginning if none)
-    ctx.scheduler.runAfter(0, internal.workable.actions.runImport, {
-      importId: args.importId,
-      subdomain,
-      apiKey,
-      userId: user._id,
-      nextUrl: job.lastCursor ?? undefined,
-      imported: job.imported,
-      skipped: job.skipped,
-      failed: job.failed,
-    });
-  },
-});
-
-// ─── Read import status (public action) ──────────────────────────────────────
+// ─── Get latest import status ─────────────────────────────────────────────────
 
 export const getLatestImportStatus = action({
   args: {},
   handler: async (ctx): Promise<{
     _id: Id<"workableImports">;
-    status: "running" | "done" | "error" | "paused";
+    status: "running" | "done" | "error";
     totalCandidates: number;
     imported: number;
     skipped: number;
     failed: number;
     startedAt: string;
     errorMessage?: string;
-    lastCursor?: string;
     subdomain?: string;
   } | null> => {
     const identity = await ctx.auth.getUserIdentity();
@@ -253,14 +167,13 @@ export const getImportStatus = action({
   args: { importId: v.id("workableImports") },
   handler: async (ctx, args): Promise<{
     _id: Id<"workableImports">;
-    status: "running" | "done" | "error" | "paused";
+    status: "running" | "done" | "error";
     totalCandidates: number;
     imported: number;
     skipped: number;
     failed: number;
     startedAt: string;
     errorMessage?: string;
-    lastCursor?: string;
     subdomain?: string;
   } | null> => {
     const identity = await ctx.auth.getUserIdentity();
@@ -269,9 +182,56 @@ export const getImportStatus = action({
   },
 });
 
-// ─── Paginated import runner (internal action) ────────────────────────────────
+// ─── Retry a failed import ────────────────────────────────────────────────────
 
-export const runImport = internalAction({
+export const retryImport = action({
+  args: {
+    importId: v.id("workableImports"),
+    subdomain: v.optional(v.string()),
+    apiKey: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
+
+    const job = await ctx.runQuery(internal.workable.db.getImportJob, { importId: args.importId });
+    if (!job) throw new ConvexError({ message: "Import job not found", code: "NOT_FOUND" });
+
+    const subdomain = args.subdomain ?? job.subdomain;
+    const apiKey = args.apiKey ?? job.apiKey;
+    if (!subdomain || !apiKey) {
+      throw new ConvexError({ message: "Please enter your Workable subdomain and API key.", code: "BAD_REQUEST" });
+    }
+
+    const user = await ctx.runQuery(api.users.getUserByToken, {
+      tokenIdentifier: identity.tokenIdentifier,
+    });
+    if (!user) throw new ConvexError({ message: "User not found", code: "NOT_FOUND" });
+
+    await ctx.runMutation(internal.workable.db.updateImportJob, {
+      importId: args.importId,
+      status: "running",
+      errorMessage: "",
+      subdomain,
+      apiKey,
+    });
+
+    ctx.scheduler.runAfter(0, internal.workable.actions.runImportBatch, {
+      importId: args.importId,
+      subdomain,
+      apiKey,
+      userId: user._id,
+      nextUrl: job.lastCursor ?? undefined,
+      imported: job.imported,
+      skipped: job.skipped,
+      failed: job.failed,
+    });
+  },
+});
+
+// ─── Core import batch runner ─────────────────────────────────────────────────
+
+export const runImportBatch = internalAction({
   args: {
     importId: v.id("workableImports"),
     subdomain: v.string(),
@@ -287,50 +247,51 @@ export const runImport = internalAction({
     let skipped = args.skipped;
     let failed = args.failed;
 
+    // Fetch the page of candidates
+    let page: WorkableCandidatesPage;
     try {
-      let page: WorkableCandidatesResponse;
-      try {
-        page = await fetchCandidatesPage(args.subdomain, args.apiKey, args.nextUrl);
-      } catch (fetchErr) {
-        const fetchMsg = fetchErr instanceof Error ? fetchErr.message : "fetch failed";
-        const is429 = fetchMsg.includes("429") || fetchMsg.includes("rate limit");
-        if (is429) {
-          // Save progress and reschedule after 60s — don't sleep inside the action
-          await ctx.runMutation(internal.workable.db.updateImportJob, {
-            importId: args.importId,
-            imported: args.imported,
-            skipped: args.skipped,
-            failed: args.failed,
-            lastCursor: args.nextUrl ?? undefined,
-          });
-          ctx.scheduler.runAfter(60000, internal.workable.actions.runImport, {
-            importId: args.importId,
-            subdomain: args.subdomain,
-            apiKey: args.apiKey,
-            userId: args.userId,
-            nextUrl: args.nextUrl,
-            imported: args.imported,
-            skipped: args.skipped,
-            failed: args.failed,
-          });
-          return;
-        }
-        throw fetchErr;
-      }
-
-      // Update total count on first page
-      if (!args.nextUrl) {
+      page = await fetchPage(args.subdomain, args.apiKey, args.nextUrl);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "fetch failed";
+      if (msg === "RATE_LIMIT_429") {
+        // Save cursor and retry after 90s via scheduler — never sleep inside action
         await ctx.runMutation(internal.workable.db.updateImportJob, {
           importId: args.importId,
-          totalCandidates: page.candidates.length,
+          imported,
+          skipped,
+          failed,
+          lastCursor: args.nextUrl ?? undefined,
         });
+        ctx.scheduler.runAfter(90000, internal.workable.actions.runImportBatch, {
+          ...args,
+          imported,
+          skipped,
+          failed,
+        });
+        return;
       }
+      await ctx.runMutation(internal.workable.db.updateImportJob, {
+        importId: args.importId,
+        status: "error",
+        errorMessage: msg,
+        imported,
+        skipped,
+        failed,
+      });
+      return;
+    }
 
-      for (const candidate of page.candidates) {
-        // Fetch full candidate profile to get resume_url (not returned by list endpoint)
-        const detail = await fetchCandidateDetail(args.subdomain, args.apiKey, candidate.id);
+    // On first page, update total
+    if (!args.nextUrl) {
+      await ctx.runMutation(internal.workable.db.updateImportJob, {
+        importId: args.importId,
+        totalCandidates: page.candidates.length,
+      });
+    }
 
-        // Skip if already imported (deduplication)
+    for (const candidate of page.candidates) {
+      try {
+        // Check dedup first before fetching details
         const existing = await ctx.runQuery(internal.workable.db.findCvByWorkableId, {
           workableCandidateId: candidate.id,
         });
@@ -339,34 +300,58 @@ export const runImport = internalAction({
           continue;
         }
 
-        if (!detail.resume_url) {
+        // Fetch full candidate to get resume URL
+        let detail: { resumeUrl?: string; name: string };
+        try {
+          detail = await fetchCandidateDetail(args.subdomain, args.apiKey, candidate.id);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "";
+          if (msg === "RATE_LIMIT_429") {
+            // Save progress, reschedule this page from scratch after 90s
+            await ctx.runMutation(internal.workable.db.updateImportJob, {
+              importId: args.importId,
+              imported,
+              skipped,
+              failed,
+              lastCursor: args.nextUrl ?? undefined,
+            });
+            ctx.scheduler.runAfter(90000, internal.workable.actions.runImportBatch, {
+              ...args,
+              imported,
+              skipped,
+              failed,
+            });
+            return;
+          }
+          failed++;
+          continue;
+        }
+
+        if (!detail.resumeUrl) {
           skipped++;
           continue;
         }
 
-        const downloaded = await downloadResume(detail.resume_url);
+        const downloaded = await downloadResume(detail.resumeUrl);
         if (!downloaded) {
           failed++;
           continue;
         }
 
-        // Upload buffer to Convex storage
+        // Upload to Convex storage
         const uploadUrl = await ctx.storage.generateUploadUrl();
         const uploadRes = await fetch(uploadUrl, {
           method: "POST",
           headers: { "Content-Type": downloaded.contentType },
           body: downloaded.buffer,
         });
-
         if (!uploadRes.ok) {
           failed++;
           continue;
         }
 
         const { storageId } = (await uploadRes.json()) as { storageId: Id<"_storage"> };
-        const fileName = detail.name
-          ? `${detail.name}.${downloaded.fileType}`
-          : `workable-${detail.id}.${downloaded.fileType}`;
+        const fileName = `${detail.name || candidate.id}.${downloaded.fileType}`;
 
         const cvId = await ctx.runMutation(internal.workable.db.insertCv, {
           storageId,
@@ -377,65 +362,60 @@ export const runImport = internalAction({
           workableCandidateId: candidate.id,
         });
 
-        // Trigger async AI processing — stagger by index to avoid burst scheduling
-        ctx.scheduler.runAfter(imported * 500, internal.workable.actions.triggerProcess, {
+        // Trigger full AI processing (text extract + AI structuring)
+        // Stagger to avoid bursting — 2s apart per candidate
+        ctx.scheduler.runAfter(imported * 2000, internal.workable.actions.processImportedCv, {
           cvId,
           storageId,
           fileType: downloaded.fileType,
         });
 
         imported++;
+      } catch {
+        failed++;
       }
+    }
 
-      // Save progress and last cursor
-      await ctx.runMutation(internal.workable.db.updateImportJob, {
+    // Save progress and cursor
+    await ctx.runMutation(internal.workable.db.updateImportJob, {
+      importId: args.importId,
+      imported,
+      skipped,
+      failed,
+      lastCursor: page.paging?.next ?? undefined,
+    });
+
+    // Chain to next page (add 500ms gap between pages)
+    if (page.paging?.next) {
+      ctx.scheduler.runAfter(500, internal.workable.actions.runImportBatch, {
         importId: args.importId,
+        subdomain: args.subdomain,
+        apiKey: args.apiKey,
+        userId: args.userId,
+        nextUrl: page.paging.next,
         imported,
         skipped,
         failed,
-        lastCursor: page.paging?.next ?? undefined,
       });
-
-      // Continue to next page if available
-      if (page.paging?.next) {
-        ctx.scheduler.runAfter(200, internal.workable.actions.runImport, {
-          importId: args.importId,
-          subdomain: args.subdomain,
-          apiKey: args.apiKey,
-          userId: args.userId,
-          nextUrl: page.paging.next,
-          imported,
-          skipped,
-          failed,
-        });
-      } else {
-        await ctx.runMutation(internal.workable.db.updateImportJob, {
-          importId: args.importId,
-          status: "done",
-        });
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Import failed";
-      // Use "paused" status for retryable errors so user can resume
-      const isRetryable = message.includes("429") || message.includes("rate limit") || message.includes("timeout");
+    } else {
       await ctx.runMutation(internal.workable.db.updateImportJob, {
         importId: args.importId,
-        status: isRetryable ? "paused" : "error",
-        errorMessage: message,
+        status: "done",
       });
     }
   },
 });
 
-// Trigger CV processing for an imported CV
-export const triggerProcess = internalAction({
+// ─── Process a single imported CV (full AI processing) ────────────────────────
+
+export const processImportedCv = internalAction({
   args: {
     cvId: v.id("cvs"),
     storageId: v.id("_storage"),
     fileType: v.string(),
   },
   handler: async (ctx, args): Promise<void> => {
-    await ctx.runAction(api.cvProcessing.extractTextOnly, {
+    await ctx.runAction(api.cvProcessing.processCv, {
       cvId: args.cvId,
       storageId: args.storageId,
       fileType: args.fileType,
