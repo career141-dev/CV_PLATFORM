@@ -20,6 +20,36 @@ type WorkableCandidate = {
   resume_url?: string;
 };
 
+type WorkableCandidateDetail = {
+  candidate: {
+    id: string;
+    name: string;
+    email?: string;
+    phone?: string;
+    resume_url?: string;
+  };
+};
+
+async function fetchCandidateDetail(
+  subdomain: string,
+  apiKey: string,
+  candidateId: string
+): Promise<WorkableCandidate> {
+  const url = workableUrl(subdomain, `/candidates/${candidateId}`);
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  if (!res.ok) return { id: candidateId, name: candidateId };
+  const data = (await res.json()) as WorkableCandidateDetail;
+  return {
+    id: data.candidate.id,
+    name: data.candidate.name,
+    email: data.candidate.email,
+    phone: data.candidate.phone,
+    resume_url: data.candidate.resume_url,
+  };
+}
+
 type WorkableCandidatesResponse = {
   candidates: WorkableCandidate[];
   paging?: { next?: string };
@@ -162,12 +192,15 @@ export const runImport = internalAction({
       }
 
       for (const candidate of page.candidates) {
-        if (!candidate.resume_url) {
+        // Fetch full candidate profile to get resume_url (not returned by list endpoint)
+        const detail = await fetchCandidateDetail(args.subdomain, args.apiKey, candidate.id);
+
+        if (!detail.resume_url) {
           skipped++;
           continue;
         }
 
-        const downloaded = await downloadResume(candidate.resume_url);
+        const downloaded = await downloadResume(detail.resume_url);
         if (!downloaded) {
           failed++;
           continue;
@@ -187,9 +220,9 @@ export const runImport = internalAction({
         }
 
         const { storageId } = (await uploadRes.json()) as { storageId: Id<"_storage"> };
-        const fileName = candidate.name
-          ? `${candidate.name}.${downloaded.fileType}`
-          : `workable-${candidate.id}.${downloaded.fileType}`;
+        const fileName = detail.name
+          ? `${detail.name}.${downloaded.fileType}`
+          : `workable-${detail.id}.${downloaded.fileType}`;
 
         const cvId = await ctx.runMutation(internal.workable.db.insertCv, {
           storageId,
