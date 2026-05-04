@@ -1,9 +1,9 @@
 "use node";
 
 import { v } from "convex/values";
-import { action } from "./_generated/server";
+import { action, internalAction } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { ConvexError } from "convex/values";
 import type { Id } from "./_generated/dataModel.d.ts";
 import OpenAI from "openai";
@@ -226,24 +226,49 @@ export const resumeProcessing = action({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
 
-    const pausedCvs = await ctx.runQuery(api.cvs.getPausedCvs, {});
-    for (const cv of pausedCvs) {
+    // Kick off the first batch — subsequent batches self-chain
+    await ctx.runAction(internal.cvProcessing.resumeBatch, { cursor: undefined, totalResumed: 0 });
+    return { resumed: 0 }; // actual count tracked internally
+  },
+});
+
+// Internal action that processes one batch of 50 paused CVs then chains to the next
+export const resumeBatch = internalAction({
+  args: {
+    cursor: v.optional(v.string()),
+    totalResumed: v.number(),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const result = await ctx.runQuery(api.cvs.getPausedCvsBatch, {
+      cursor: args.cursor,
+      limit: 50,
+    });
+
+    for (let i = 0; i < result.page.length; i++) {
+      const cv = result.page[i];
       if (cv.rawText) {
-        // Already has raw text — just mark as ready (lazy approach, no AI needed)
-        await ctx.runMutation(api.cvs.saveRawText, {
+        // Already has raw text — just mark as ready, stagger by 200ms each
+        ctx.scheduler.runAfter(i * 200, api.cvs.saveRawText, {
           cvId: cv._id,
           rawText: cv.rawText,
         });
       } else {
-        // No raw text yet — re-queue text extraction only
-        ctx.scheduler.runAfter(0, api.cvProcessing.extractTextOnly, {
+        // No raw text yet — re-queue text extraction, stagger by 1s each
+        ctx.scheduler.runAfter(i * 1000, api.cvProcessing.extractTextOnly, {
           cvId: cv._id,
           storageId: cv.storageId,
           fileType: cv.fileType,
         });
       }
     }
-    return { resumed: pausedCvs.length };
+
+    // Chain to next batch after allowing this batch to start processing
+    if (!result.isDone && result.continueCursor) {
+      ctx.scheduler.runAfter(result.page.length * 250, internal.cvProcessing.resumeBatch, {
+        cursor: result.continueCursor,
+        totalResumed: args.totalResumed + result.page.length,
+      });
+    }
   },
 });
 

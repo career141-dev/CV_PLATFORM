@@ -95,7 +95,7 @@ async function fetchCandidatesPage(
   apiKey: string,
   nextUrl?: string
 ): Promise<WorkableCandidatesResponse> {
-  const url = nextUrl ?? workableUrl(subdomain, "/candidates?limit=100");
+  const url = nextUrl ?? workableUrl(subdomain, "/candidates?limit=10");
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
@@ -343,8 +343,8 @@ export const runImport = internalAction({
           workableCandidateId: candidate.id,
         });
 
-        // Trigger async AI processing
-        ctx.scheduler.runAfter(0, internal.workable.actions.triggerProcess, {
+        // Trigger async AI processing — stagger by index to avoid burst scheduling
+        ctx.scheduler.runAfter(imported * 500, internal.workable.actions.triggerProcess, {
           cvId,
           storageId,
           fileType: downloaded.fileType,

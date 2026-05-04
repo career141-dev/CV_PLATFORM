@@ -123,6 +123,23 @@ export const getPausedCvs = query({
   },
 });
 
+// Paginated version for batched resume processing
+export const getPausedCvsBatch = query({
+  args: {
+    cursor: v.optional(v.string()),
+    limit: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return { page: [], continueCursor: null, isDone: true };
+    const result = await ctx.db
+      .query("cvs")
+      .withIndex("by_status", (q) => q.eq("status", "paused"))
+      .paginate({ numItems: args.limit, cursor: args.cursor ?? null });
+    return result;
+  },
+});
+
 export const saveRawText = mutation({
   args: {
     cvId: v.id("cvs"),
