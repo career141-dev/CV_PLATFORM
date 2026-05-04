@@ -85,6 +85,7 @@ function CvResultCard({ cvId, score, reason, index }: {
   cvId: Id<"cvs">; score: number; reason: string; index: number;
 }) {
   const cv = useQuery(api.cvs.getCv, { cvId });
+  const [expanded, setExpanded] = useState(false);
   const [addJobOpen, setAddJobOpen] = useState(false);
 
   return (
@@ -97,8 +98,12 @@ function CvResultCard({ cvId, score, reason, index }: {
         <Skeleton className="h-24 rounded-xl" />
       ) : (
         <>
-          <div className="bg-card border rounded-xl p-4 hover:shadow-md hover:border-primary/30 transition-all group">
-            <div className="flex items-start gap-3">
+          <div className="bg-card border rounded-xl overflow-hidden hover:border-primary/30 transition-all">
+            {/* Header row — click to expand */}
+            <div
+              className="flex items-start gap-3 p-4 cursor-pointer group"
+              onClick={() => setExpanded(!expanded)}
+            >
               <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center text-xs font-bold text-muted-foreground shrink-0 mt-0.5">
                 {index + 1}
               </div>
@@ -107,7 +112,7 @@ function CvResultCard({ cvId, score, reason, index }: {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between gap-2 mb-1">
-                  <Link to={`/cv/${cvId}`} className="flex items-center gap-2 flex-wrap hover:underline cursor-pointer">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="font-semibold text-sm">{cv.candidateName ?? cv.fileName}</h3>
                     {cv.seniority && (
                       <Badge variant="secondary" className="text-xs capitalize">{cv.seniority}</Badge>
@@ -115,7 +120,7 @@ function CvResultCard({ cvId, score, reason, index }: {
                     {cv.industry && (
                       <Badge variant="outline" className="text-xs">{cv.industry}</Badge>
                     )}
-                  </Link>
+                  </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <ScoreDot score={score} />
                     <button
@@ -125,9 +130,10 @@ function CvResultCard({ cvId, score, reason, index }: {
                     >
                       <PlusCircle className="w-4 h-4" />
                     </button>
-                    <Link to={`/cv/${cvId}`}>
-                      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
-                    </Link>
+                    <ChevronRight className={cn(
+                      "w-3.5 h-3.5 text-muted-foreground transition-transform",
+                      expanded && "rotate-90"
+                    )} />
                   </div>
                 </div>
                 {cv.currentTitle && (
@@ -138,18 +144,13 @@ function CvResultCard({ cvId, score, reason, index }: {
                   </p>
                 )}
                 {cv.location && (
-                  <p className="text-xs text-muted-foreground flex items-center gap-1 mb-1.5">
+                  <p className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
                     <MapPin className="w-3 h-3 shrink-0" />
                     {cv.location}
                   </p>
                 )}
-                {reason && (
-                  <p className="text-xs text-primary/80 bg-accent/40 rounded-md px-2 py-1 mb-2">
-                    {reason}
-                  </p>
-                )}
-                {cv.skills && cv.skills.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
+                {!expanded && cv.skills && cv.skills.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1.5">
                     {cv.skills.slice(0, 6).map((s) => (
                       <span key={s} className="text-xs bg-muted px-1.5 py-0.5 rounded">{s}</span>
                     ))}
@@ -160,7 +161,75 @@ function CvResultCard({ cvId, score, reason, index }: {
                 )}
               </div>
             </div>
+
+            {/* Match reason — always visible */}
+            {reason && (
+              <div className="px-4 pb-3 -mt-1">
+                <p className="text-xs text-primary/80 bg-accent/40 rounded-md px-2.5 py-1.5">
+                  {reason}
+                </p>
+              </div>
+            )}
+
+            {/* Expanded details */}
+            <AnimatePresence>
+              {expanded && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="overflow-hidden border-t"
+                >
+                  <div className="p-4 space-y-4">
+                    {/* Raw text snippet */}
+                    {cv.rawText && (
+                      <div>
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+                          About
+                        </p>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          {cv.rawText.slice(0, 300)}{cv.rawText.length > 300 ? "…" : ""}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* All skills */}
+                    {cv.skills && cv.skills.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+                          Skills
+                        </p>
+                        <div className="flex flex-wrap gap-1">
+                          {cv.skills.map((s) => (
+                            <span key={s} className="text-xs bg-muted px-1.5 py-0.5 rounded">{s}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Actions */}
+                    <div className="flex items-center gap-3 pt-1">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setAddJobOpen(true); }}
+                        className="inline-flex items-center gap-1.5 text-xs bg-primary text-primary-foreground hover:bg-primary/90 px-3 py-1.5 rounded-md font-medium transition-colors cursor-pointer"
+                      >
+                        <PlusCircle className="w-3.5 h-3.5" /> Add to Job
+                      </button>
+                      <Link
+                        to={`/cv/${cvId}`}
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline font-medium"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        View full profile <ChevronRight className="w-3 h-3" />
+                      </Link>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
+
           <AddToJobDialog
             cvId={cvId}
             candidateName={cv.candidateName}

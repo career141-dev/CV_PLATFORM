@@ -192,6 +192,32 @@ function MatchCard({ match, index }: { match: CandidateMatch; index: number }) {
                 className="overflow-hidden border-t"
               >
                 <div className="p-4 space-y-4">
+                  {/* About snippet */}
+                  {cv.rawText && (
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+                        About
+                      </p>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {cv.rawText.slice(0, 300)}{cv.rawText.length > 300 ? "…" : ""}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* All skills */}
+                  {cv.skills && cv.skills.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+                        All Skills
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {cv.skills.map((s) => (
+                          <span key={s} className="text-xs bg-muted px-1.5 py-0.5 rounded">{s}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div>
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
                       Match Breakdown
@@ -234,13 +260,21 @@ function MatchCard({ match, index }: { match: CandidateMatch; index: number }) {
                     )}
                   </div>
 
-                  <Link
-                    to={`/cv/${match.cvId}`}
-                    className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline font-medium"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    View full profile <ChevronRight className="w-3 h-3" />
-                  </Link>
+                  <div className="flex items-center gap-3 pt-1">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setAddJobOpen(true); }}
+                      className="inline-flex items-center gap-1.5 text-xs bg-primary text-primary-foreground hover:bg-primary/90 px-3 py-1.5 rounded-md font-medium transition-colors cursor-pointer"
+                    >
+                      <PlusCircle className="w-3.5 h-3.5" /> Add to Job
+                    </button>
+                    <Link
+                      to={`/cv/${match.cvId}`}
+                      className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline font-medium"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      View full profile <ChevronRight className="w-3 h-3" />
+                    </Link>
+                  </div>
                 </div>
               </motion.div>
             )}
