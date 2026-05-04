@@ -150,6 +150,7 @@ export const startBulkImport = action({
       nextUrl: undefined,
       imported: 0,
       skipped: 0,
+      deduplicated: 0,
       failed: 0,
     });
 
@@ -167,6 +168,7 @@ export const getLatestImportStatus = action({
     totalCandidates: number;
     imported: number;
     skipped: number;
+    deduplicated: number;
     failed: number;
     startedAt: string;
     errorMessage?: string;
@@ -174,7 +176,9 @@ export const getLatestImportStatus = action({
   } | null> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
-    return await ctx.runQuery(internal.workable.db.getLatestImportJob, {});
+    const job = await ctx.runQuery(internal.workable.db.getLatestImportJob, {});
+    if (!job) return null;
+    return { ...job, deduplicated: job.deduplicated ?? 0 };
   },
 });
 
@@ -186,6 +190,7 @@ export const getImportStatus = action({
     totalCandidates: number;
     imported: number;
     skipped: number;
+    deduplicated: number;
     failed: number;
     startedAt: string;
     errorMessage?: string;
@@ -193,7 +198,9 @@ export const getImportStatus = action({
   } | null> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
-    return await ctx.runQuery(internal.workable.db.getImportJob, { importId: args.importId });
+    const job = await ctx.runQuery(internal.workable.db.getImportJob, { importId: args.importId });
+    if (!job) return null;
+    return { ...job, deduplicated: job.deduplicated ?? 0 };
   },
 });
 
@@ -239,7 +246,60 @@ export const retryImport = action({
       nextUrl: job.lastCursor ?? undefined,
       imported: job.imported,
       skipped: job.skipped,
+      deduplicated: job.deduplicated ?? 0,
       failed: job.failed,
+    });
+  },
+});
+
+// ─── Retry skipped (no CV) candidates from the beginning ─────────────────────
+
+export const retrySkipped = action({
+  args: {
+    importId: v.id("workableImports"),
+    subdomain: v.optional(v.string()),
+    apiKey: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
+
+    const job = await ctx.runQuery(internal.workable.db.getImportJob, { importId: args.importId });
+    if (!job) throw new ConvexError({ message: "Import job not found", code: "NOT_FOUND" });
+
+    const subdomain = args.subdomain ?? job.subdomain;
+    const apiKey = args.apiKey ?? job.apiKey;
+    if (!subdomain || !apiKey) {
+      throw new ConvexError({ message: "Please enter your Workable subdomain and API key.", code: "BAD_REQUEST" });
+    }
+
+    const user = await ctx.runQuery(api.users.getUserByToken, {
+      tokenIdentifier: identity.tokenIdentifier,
+    });
+    if (!user) throw new ConvexError({ message: "User not found", code: "NOT_FOUND" });
+
+    // Reset cursor to start, keep imported/deduplicated counts, reset skipped/failed
+    await ctx.runMutation(internal.workable.db.updateImportJob, {
+      importId: args.importId,
+      status: "running",
+      errorMessage: "",
+      skipped: 0,
+      failed: 0,
+      lastCursor: undefined,
+      subdomain,
+      apiKey,
+    });
+
+    ctx.scheduler.runAfter(0, internal.workable.actions.runImportBatch, {
+      importId: args.importId,
+      subdomain,
+      apiKey,
+      userId: user._id,
+      nextUrl: undefined, // restart from beginning
+      imported: job.imported,
+      skipped: 0,
+      deduplicated: job.deduplicated ?? 0,
+      failed: 0,
     });
   },
 });
@@ -295,6 +355,7 @@ export const runImportBatch = internalAction({
           importId: args.importId,
           imported,
           skipped,
+          deduplicated,
           failed,
           lastCursor: args.nextUrl ?? undefined,
         });
@@ -302,6 +363,7 @@ export const runImportBatch = internalAction({
           ...args,
           imported,
           skipped,
+          deduplicated,
           failed,
         });
         return;
@@ -312,6 +374,7 @@ export const runImportBatch = internalAction({
         errorMessage: msg,
         imported,
         skipped,
+        deduplicated,
         failed,
       });
       return;
@@ -335,7 +398,7 @@ export const runImportBatch = internalAction({
           workableCandidateId: candidate.id,
         });
         if (existing) {
-          skipped++;
+          deduplicated++;
           continue;
         }
 
@@ -351,6 +414,7 @@ export const runImportBatch = internalAction({
               importId: args.importId,
               imported,
               skipped,
+              deduplicated,
               failed,
               lastCursor: args.nextUrl ?? undefined,
             });
@@ -358,6 +422,7 @@ export const runImportBatch = internalAction({
               ...args,
               imported,
               skipped,
+              deduplicated,
               failed,
             });
             return;
@@ -427,6 +492,7 @@ export const runImportBatch = internalAction({
       importId: args.importId,
       imported,
       skipped,
+      deduplicated,
       failed,
       lastCursor: page.paging?.next ?? undefined,
     });
@@ -441,6 +507,7 @@ export const runImportBatch = internalAction({
         nextUrl: page.paging.next,
         imported,
         skipped,
+        deduplicated,
         failed,
       });
     } else {

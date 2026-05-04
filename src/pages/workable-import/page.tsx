@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { motion } from "motion/react";
 import {
   Building2, Key, CheckCircle2, AlertCircle, Loader2,
-  SkipForward, XCircle, ExternalLink, Info, RotateCcw, Play,
+  SkipForward, XCircle, ExternalLink, Info, RotateCcw, Play, Copy,
 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel.js";
 import { cn } from "@/lib/utils.ts";
@@ -21,6 +21,7 @@ type ImportStatus = {
   totalCandidates: number;
   imported: number;
   skipped: number;
+  deduplicated: number;
   failed: number;
   startedAt: string;
   errorMessage?: string;
@@ -74,6 +75,7 @@ function ImportContent() {
   const getLatestImportStatus = useAction(api.workable.actions.getLatestImportStatus);
   const getImportStatus = useAction(api.workable.actions.getImportStatus);
   const retryImport = useAction(api.workable.actions.retryImport);
+  const retrySkippedAction = useAction(api.workable.actions.retrySkipped);
   const stopImport = useAction(api.workable.actions.stopImport);
   const runCleanup = useAction(api.workable.cleanupAction.runCleanup);
   const fixStats = useAction(api.workable.cleanupAction.fixStats);
@@ -142,6 +144,7 @@ function ImportContent() {
         totalCandidates: 0,
         imported: 0,
         skipped: 0,
+        deduplicated: 0,
         failed: 0,
         startedAt: new Date().toISOString(),
         subdomain,
@@ -164,6 +167,21 @@ function ImportContent() {
       toast.info("Import retrying from where it left off.");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to retry";
+      toast.error(msg);
+      setIsImporting(false);
+    }
+  };
+
+  const handleRetrySkipped = async () => {
+    if (!importStatus) return;
+    setIsImporting(true);
+    try {
+      await retrySkippedAction({ importId: importStatus._id, subdomain, apiKey });
+      setImportStatus((prev) => prev ? { ...prev, status: "running", errorMessage: "", skipped: 0, failed: 0 } : prev);
+      startPolling(importStatus._id);
+      toast.info("Retrying skipped candidates from the beginning. Already-imported CVs will be skipped automatically.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to retry skipped";
       toast.error(msg);
       setIsImporting(false);
     }
@@ -216,7 +234,7 @@ function ImportContent() {
   };
 
   const totalProcessed = importStatus
-    ? importStatus.imported + importStatus.skipped + importStatus.failed
+    ? importStatus.imported + importStatus.skipped + importStatus.deduplicated + importStatus.failed
     : 0;
 
   return (
@@ -376,12 +394,18 @@ function ImportContent() {
                 </div>
               )}
 
-              <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="grid grid-cols-2 gap-3 mb-4">
                 <StatBox
                   label="Imported"
                   value={importStatus.imported}
                   icon={CheckCircle2}
                   color="bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400"
+                />
+                <StatBox
+                  label="Already imported"
+                  value={importStatus.deduplicated}
+                  icon={Copy}
+                  color="bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
                 />
                 <StatBox
                   label="Skipped (no CV)"
@@ -419,18 +443,30 @@ function ImportContent() {
               )}
 
               {importStatus.status === "stopped" && (
-                <div className="pt-3 border-t flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium">Import stopped</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">Will continue from where it stopped — no duplicates.</p>
+                <div className="pt-3 border-t space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium">Import stopped</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Will continue from where it stopped — no duplicates.</p>
+                    </div>
+                    <Button size="sm" onClick={handleRetry} disabled={isImporting} className="gap-1.5 shrink-0">
+                      {isImporting ? (
+                        <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Resuming...</>
+                      ) : (
+                        <><Play className="w-3.5 h-3.5" /> Resume Import</>
+                      )}
+                    </Button>
                   </div>
-                  <Button size="sm" onClick={handleRetry} disabled={isImporting} className="gap-1.5 shrink-0">
-                    {isImporting ? (
-                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Resuming...</>
-                    ) : (
-                      <><Play className="w-3.5 h-3.5" /> Resume Import</>
-                    )}
-                  </Button>
+                  {importStatus.skipped > 0 && (
+                    <div className="flex items-center justify-between gap-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
+                      <p className="text-xs text-amber-700 dark:text-amber-400">
+                        {importStatus.skipped} candidates were skipped (no CV found). Retry to attempt them again.
+                      </p>
+                      <Button size="sm" variant="secondary" onClick={handleRetrySkipped} disabled={isImporting} className="gap-1.5 shrink-0 text-amber-700 dark:text-amber-400">
+                        <RotateCcw className="w-3.5 h-3.5" /> Retry Skipped
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -460,18 +496,30 @@ function ImportContent() {
               )}
 
               {importStatus.status === "done" && (
-                <div className="pt-3 border-t text-center">
-                  <p className="text-sm text-muted-foreground">
-                    Import complete. {importStatus.imported.toLocaleString()} CVs imported successfully.
-                  </p>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="mt-3"
-                    onClick={() => { setImportStatus(null); setImportId(null); }}
-                  >
-                    Start new import
-                  </Button>
+                <div className="pt-3 border-t space-y-3">
+                  <div className="text-center">
+                    <p className="text-sm text-muted-foreground">
+                      Import complete. {importStatus.imported.toLocaleString()} CVs imported successfully.
+                    </p>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="mt-3"
+                      onClick={() => { setImportStatus(null); setImportId(null); }}
+                    >
+                      Start new import
+                    </Button>
+                  </div>
+                  {importStatus.skipped > 0 && (
+                    <div className="flex items-center justify-between gap-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
+                      <p className="text-xs text-amber-700 dark:text-amber-400">
+                        {importStatus.skipped} candidates were skipped (no CV found). Retry to attempt them again.
+                      </p>
+                      <Button size="sm" variant="secondary" onClick={handleRetrySkipped} disabled={isImporting} className="gap-1.5 shrink-0 text-amber-700 dark:text-amber-400">
+                        {isImporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />} Retry Skipped
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </motion.div>
