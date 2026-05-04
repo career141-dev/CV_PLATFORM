@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel.js";
 import { cn } from "@/lib/utils.ts";
+import ReactMarkdown from "react-markdown";
 import { formatDistanceToNow } from "date-fns";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -686,8 +687,8 @@ function JobDetailView({ job, onBack }: { job: Job; onBack: () => void }) {
           <summary className="text-xs font-medium text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-1.5">
             <ChevronDown className="w-3.5 h-3.5" /> View job description
           </summary>
-          <div className="text-xs text-muted-foreground mt-2 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto bg-muted/30 rounded-lg p-3 break-words">
-            {job.description}
+          <div className="prose prose-sm dark:prose-invert max-w-none text-xs text-muted-foreground mt-2 leading-relaxed max-h-48 overflow-y-auto bg-muted/30 rounded-lg p-3 break-words">
+            <ReactMarkdown>{job.description}</ReactMarkdown>
           </div>
         </details>
       </div>
