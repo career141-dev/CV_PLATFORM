@@ -1,6 +1,52 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { ConvexError } from "convex/values";
+import type { MutationCtx } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel.d.ts";
+
+type CvStatus = Doc<"cvs">["status"];
+type StatsField = "ready" | "processing" | "errors" | "paused";
+
+function statusToField(status: CvStatus): StatsField {
+  if (status === "ready") return "ready";
+  if (status === "error") return "errors";
+  if (status === "paused") return "paused";
+  return "processing"; // uploading | processing
+}
+
+async function adjustStats(
+  ctx: MutationCtx,
+  oldStatus: CvStatus | null,
+  newStatus: CvStatus
+) {
+  const stats = await ctx.db.query("cvStats").first();
+  if (!stats) {
+    // Bootstrap the stats document
+    await ctx.db.insert("cvStats", { total: 1, ready: 0, processing: 1, errors: 0, paused: 0 });
+    return;
+  }
+
+  const patch: Partial<{ total: number; ready: number; processing: number; errors: number; paused: number }> = {};
+
+  if (oldStatus === null) {
+    patch.total = stats.total + 1;
+    const f = statusToField(newStatus);
+    patch[f] = stats[f] + 1;
+  } else {
+    const oldF = statusToField(oldStatus);
+    const newF = statusToField(newStatus);
+    if (oldF !== newF) {
+      patch[oldF] = Math.max(0, stats[oldF] - 1);
+      patch[newF] = stats[newF] + 1;
+    }
+  }
+
+  if (Object.keys(patch).length > 0) {
+    await ctx.db.patch(stats._id, patch);
+  }
+}
+
+// ─── Mutations ────────────────────────────────────────────────────────────────
 
 export const generateUploadUrl = mutation({
   args: {},
@@ -28,7 +74,7 @@ export const createCv = mutation({
       .unique();
     if (!user) throw new ConvexError({ message: "User not found", code: "NOT_FOUND" });
 
-    return await ctx.db.insert("cvs", {
+    const cvId = await ctx.db.insert("cvs", {
       storageId: args.storageId,
       fileName: args.fileName,
       fileType: args.fileType,
@@ -36,6 +82,9 @@ export const createCv = mutation({
       status: "uploading",
       uploadedBy: user._id,
     });
+
+    await adjustStats(ctx, null, "uploading");
+    return cvId;
   },
 });
 
@@ -52,10 +101,13 @@ export const updateCvStatus = mutation({
     errorMessage: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const cv = await ctx.db.get(args.cvId);
+    const oldStatus = cv?.status ?? null;
     await ctx.db.patch(args.cvId, {
       status: args.status,
       errorMessage: args.errorMessage,
     });
+    if (oldStatus) await adjustStats(ctx, oldStatus, args.status);
   },
 });
 
@@ -90,7 +142,10 @@ export const saveCvData = mutation({
   },
   handler: async (ctx, args) => {
     const { cvId, ...data } = args;
+    const cv = await ctx.db.get(cvId);
+    const oldStatus = cv?.status ?? null;
     await ctx.db.patch(cvId, { ...data, status: "ready" });
+    if (oldStatus) await adjustStats(ctx, oldStatus, "ready");
   },
 });
 
@@ -103,7 +158,7 @@ export const listCvs = query({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return { page: [], isDone: true, continueCursor: null };
 
-    let q = ctx.db.query("cvs").order("desc");
+    const q = ctx.db.query("cvs").order("desc");
     return await q.paginate(args.paginationOpts);
   },
 });
@@ -124,22 +179,16 @@ export const getStats = query({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
 
-    // Use indexed queries per status instead of full table scan
-    const [readyDocs, processingDocs, uploadingDocs, errorDocs, pausedDocs] = await Promise.all([
-      ctx.db.query("cvs").withIndex("by_status", (q) => q.eq("status", "ready")).collect(),
-      ctx.db.query("cvs").withIndex("by_status", (q) => q.eq("status", "processing")).collect(),
-      ctx.db.query("cvs").withIndex("by_status", (q) => q.eq("status", "uploading")).collect(),
-      ctx.db.query("cvs").withIndex("by_status", (q) => q.eq("status", "error")).collect(),
-      ctx.db.query("cvs").withIndex("by_status", (q) => q.eq("status", "paused")).collect(),
-    ]);
-
-    const ready = readyDocs.length;
-    const processing = processingDocs.length + uploadingDocs.length;
-    const errors = errorDocs.length;
-    const paused = pausedDocs.length;
-    const total = ready + processing + errors + paused;
-
-    return { total, ready, processing, errors, paused };
+    // O(1) read — stats are maintained by mutations
+    const stats = await ctx.db.query("cvStats").first();
+    if (!stats) return { total: 0, ready: 0, processing: 0, errors: 0, paused: 0 };
+    return {
+      total: stats.total,
+      ready: stats.ready,
+      processing: stats.processing,
+      errors: stats.errors,
+      paused: stats.paused,
+    };
   },
 });
 
@@ -157,17 +206,15 @@ export const searchCvs = query({
 
     const limit = args.limit ?? 20;
 
-    // Search across raw text
-    let textSearch = ctx.db
+    const textSearch = ctx.db
       .query("cvs")
       .withSearchIndex("search_text", (q) => {
-        let s = q.search("rawText", args.query).eq("status", "ready");
+        const s = q.search("rawText", args.query).eq("status", "ready");
         return s;
       });
 
     const textResults = await textSearch.take(limit);
 
-    // Also search summary
     const summaryResults = await ctx.db
       .query("cvs")
       .withSearchIndex("search_summary", (q) =>
@@ -175,13 +222,11 @@ export const searchCvs = query({
       )
       .take(limit);
 
-    // Merge and deduplicate
     const seen = new Set<string>();
     const merged = [];
     for (const cv of [...textResults, ...summaryResults]) {
       if (!seen.has(cv._id)) {
         seen.add(cv._id);
-        // Apply filters
         if (args.industry && cv.industry !== args.industry) continue;
         if (args.seniority && cv.seniority !== args.seniority) continue;
         merged.push(cv);
@@ -199,7 +244,17 @@ export const deleteCv = mutation({
     if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
     const cv = await ctx.db.get(args.cvId);
     if (!cv) throw new ConvexError({ message: "CV not found", code: "NOT_FOUND" });
+    const oldStatus = cv.status;
     await ctx.storage.delete(cv.storageId);
     await ctx.db.delete(args.cvId);
+    // Decrement stats
+    const stats = await ctx.db.query("cvStats").first();
+    if (stats) {
+      const f = statusToField(oldStatus);
+      await ctx.db.patch(stats._id, {
+        total: Math.max(0, stats.total - 1),
+        [f]: Math.max(0, stats[f] - 1),
+      });
+    }
   },
 });

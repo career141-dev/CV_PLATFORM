@@ -65,6 +65,16 @@ export default defineSchema({
     type: v.union(v.literal("natural_language"), v.literal("job_description")),
     resultCount: v.number(),
   }).index("by_user", ["userId"]),
+
+  // Singleton stats document — maintained by mutations for O(1) dashboard reads
+  cvStats: defineTable({
+    total: v.number(),
+    ready: v.number(),
+    processing: v.number(),
+    errors: v.number(),
+    paused: v.number(),
+  }),
+
   workableImports: defineTable({
     status: v.union(v.literal("running"), v.literal("done"), v.literal("error")),
     totalCandidates: v.number(),

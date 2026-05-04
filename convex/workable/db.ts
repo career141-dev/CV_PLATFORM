@@ -59,7 +59,7 @@ export const insertCv = internalMutation({
     workableCandidateId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    return await ctx.db.insert("cvs", {
+    const cvId = await ctx.db.insert("cvs", {
       storageId: args.storageId,
       fileName: args.fileName,
       fileType: args.fileType,
@@ -68,6 +68,19 @@ export const insertCv = internalMutation({
       uploadedBy: args.userId,
       workableCandidateId: args.workableCandidateId,
     });
+
+    // Update stats counter
+    const stats = await ctx.db.query("cvStats").first();
+    if (stats) {
+      await ctx.db.patch(stats._id, {
+        total: stats.total + 1,
+        processing: stats.processing + 1, // uploading counts as processing
+      });
+    } else {
+      await ctx.db.insert("cvStats", { total: 1, ready: 0, processing: 1, errors: 0, paused: 0 });
+    }
+
+    return cvId;
   },
 });
 
