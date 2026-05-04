@@ -183,7 +183,7 @@ export default defineSchema({
     .index("by_job_and_stage", ["jobId", "stage"]),
 
   workableImports: defineTable({
-    status: v.union(v.literal("running"), v.literal("done"), v.literal("error")),
+    status: v.union(v.literal("running"), v.literal("done"), v.literal("error"), v.literal("stopped")),
     totalCandidates: v.number(),
     imported: v.number(),
     skipped: v.number(),

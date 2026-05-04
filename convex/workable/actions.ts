@@ -20,19 +20,34 @@ type WorkableCandidateDetail = {
     phone?: string;
     resume_url?: string;
     resume?: { url?: string; file_url?: string };
-    attachments?: Array<{ url?: string; file_url?: string; type?: string }>;
+    // Attachments can have any type — don't restrict to "resume"/"cv"
+    attachments?: Array<{ url?: string; file_url?: string; type?: string; name?: string }>;
   };
 };
 
 function extractResumeUrl(detail: WorkableCandidateDetail["candidate"]): string | undefined {
+  // 1. Top-level resume_url (most reliable)
   if (detail.resume_url) return detail.resume_url;
+  // 2. Nested resume object
   if (detail.resume?.url) return detail.resume.url;
   if (detail.resume?.file_url) return detail.resume.file_url;
-  const resumeAttachment = detail.attachments?.find(
-    (a) => !a.type || a.type === "resume" || a.type === "cv"
+  // 3. Attachments explicitly typed as resume/cv
+  const typedAttachment = detail.attachments?.find(
+    (a) => a.type === "resume" || a.type === "cv"
   );
-  if (resumeAttachment?.url) return resumeAttachment.url;
-  if (resumeAttachment?.file_url) return resumeAttachment.file_url;
+  if (typedAttachment?.url) return typedAttachment.url;
+  if (typedAttachment?.file_url) return typedAttachment.file_url;
+  // 4. Any attachment whose name looks like a CV/resume
+  const namedAttachment = detail.attachments?.find((a) => {
+    const name = (a.name ?? "").toLowerCase();
+    return name.includes("cv") || name.includes("resume");
+  });
+  if (namedAttachment?.url) return namedAttachment.url;
+  if (namedAttachment?.file_url) return namedAttachment.file_url;
+  // 5. Fall back to ANY attachment with a URL (last resort)
+  const anyAttachment = detail.attachments?.find((a) => a.url ?? a.file_url);
+  if (anyAttachment?.url) return anyAttachment.url;
+  if (anyAttachment?.file_url) return anyAttachment.file_url;
   return undefined;
 }
 
@@ -148,7 +163,7 @@ export const getLatestImportStatus = action({
   args: {},
   handler: async (ctx): Promise<{
     _id: Id<"workableImports">;
-    status: "running" | "done" | "error";
+    status: "running" | "done" | "error" | "stopped";
     totalCandidates: number;
     imported: number;
     skipped: number;
@@ -167,7 +182,7 @@ export const getImportStatus = action({
   args: { importId: v.id("workableImports") },
   handler: async (ctx, args): Promise<{
     _id: Id<"workableImports">;
-    status: "running" | "done" | "error";
+    status: "running" | "done" | "error" | "stopped";
     totalCandidates: number;
     imported: number;
     skipped: number;
@@ -229,6 +244,21 @@ export const retryImport = action({
   },
 });
 
+// ─── Stop a running import ────────────────────────────────────────────────────
+
+export const stopImport = action({
+  args: { importId: v.id("workableImports") },
+  handler: async (ctx, args): Promise<void> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
+    await ctx.runMutation(internal.workable.db.updateImportJob, {
+      importId: args.importId,
+      status: "stopped",
+      errorMessage: "Import stopped by user.",
+    });
+  },
+});
+
 // ─── Core import batch runner ─────────────────────────────────────────────────
 
 export const runImportBatch = internalAction({
@@ -246,6 +276,10 @@ export const runImportBatch = internalAction({
     let imported = args.imported;
     let skipped = args.skipped;
     let failed = args.failed;
+
+    // Check if import was stopped before processing this batch
+    const currentJob = await ctx.runQuery(internal.workable.db.getImportJob, { importId: args.importId });
+    if (!currentJob || currentJob.status === "stopped" || currentJob.status === "done") return;
 
     // Fetch the page of candidates
     let page: WorkableCandidatesPage;

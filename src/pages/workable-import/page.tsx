@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils.ts";
 
 type ImportStatus = {
   _id: Id<"workableImports">;
-  status: "running" | "done" | "error";
+  status: "running" | "done" | "error" | "stopped";
   totalCandidates: number;
   imported: number;
   skipped: number;
@@ -74,6 +74,7 @@ function ImportContent() {
   const getLatestImportStatus = useAction(api.workable.actions.getLatestImportStatus);
   const getImportStatus = useAction(api.workable.actions.getImportStatus);
   const retryImport = useAction(api.workable.actions.retryImport);
+  const stopImport = useAction(api.workable.actions.stopImport);
   const runCleanup = useAction(api.workable.cleanupAction.runCleanup);
   const fixStats = useAction(api.workable.cleanupAction.fixStats);
 
@@ -164,6 +165,19 @@ function ImportContent() {
       const msg = err instanceof Error ? err.message : "Failed to retry";
       toast.error(msg);
       setIsImporting(false);
+    }
+  };
+
+  const handleStop = async () => {
+    if (!importStatus) return;
+    try {
+      await stopImport({ importId: importStatus._id });
+      setImportStatus((prev) => prev ? { ...prev, status: "stopped" } : prev);
+      setIsImporting(false);
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      toast.info("Import stopped. You can resume it later.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to stop import");
     }
   };
 
@@ -322,6 +336,11 @@ function ImportContent() {
                     <Loader2 className="w-3 h-3 animate-spin" /> Running
                   </Badge>
                 )}
+                {importStatus.status === "stopped" && (
+                  <Badge variant="secondary" className="gap-1 text-xs text-amber-600 dark:text-amber-400">
+                    <AlertCircle className="w-3 h-3" /> Stopped
+                  </Badge>
+                )}
                 {importStatus.status === "done" && (
                   <Badge variant="secondary" className="gap-1 text-xs text-green-600 dark:text-green-400">
                     <CheckCircle2 className="w-3 h-3" /> Complete
@@ -369,6 +388,36 @@ function ImportContent() {
                 <div className="flex items-start gap-2 bg-destructive/10 border border-destructive/20 rounded-lg p-3 text-xs text-destructive mb-4">
                   <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                   {importStatus.errorMessage}
+                </div>
+              )}
+
+              {importStatus.status === "running" && (
+                <div className="pt-3 border-t flex items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground">Import is running in the background.</p>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleStop}
+                    className="gap-1.5 shrink-0 text-destructive"
+                  >
+                    <XCircle className="w-3.5 h-3.5" /> Stop Import
+                  </Button>
+                </div>
+              )}
+
+              {importStatus.status === "stopped" && (
+                <div className="pt-3 border-t flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium">Import stopped</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Will continue from where it stopped — no duplicates.</p>
+                  </div>
+                  <Button size="sm" onClick={handleRetry} disabled={isImporting} className="gap-1.5 shrink-0">
+                    {isImporting ? (
+                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Resuming...</>
+                    ) : (
+                      <><Play className="w-3.5 h-3.5" /> Resume Import</>
+                    )}
+                  </Button>
                 </div>
               )}
 
