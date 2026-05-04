@@ -67,6 +67,48 @@ export default defineSchema({
     query: v.string(),
     type: v.union(v.literal("natural_language"), v.literal("job_description")),
     resultCount: v.number(),
+    // Stored results for persistence
+    results: v.optional(v.array(v.object({
+      cvId: v.string(),
+      score: v.number(),
+      reason: v.string(),
+    }))),
+    // For natural language searches
+    interpretation: v.optional(v.object({
+      searchText: v.string(),
+      industry: v.optional(v.string()),
+      seniority: v.optional(v.string()),
+      minYears: v.optional(v.number()),
+      interpretation: v.string(),
+      keywords: v.array(v.string()),
+    })),
+    // For JD matches — store top-level job requirements
+    jobRequirements: v.optional(v.object({
+      title: v.string(),
+      requiredSkills: v.array(v.string()),
+      preferredSkills: v.array(v.string()),
+      minYearsExperience: v.union(v.number(), v.null()),
+      industry: v.union(v.string(), v.null()),
+      seniority: v.union(v.string(), v.null()),
+      location: v.union(v.string(), v.null()),
+      education: v.union(v.string(), v.null()),
+      summary: v.string(),
+    })),
+    // For JD matches — store richer match objects
+    matchResults: v.optional(v.array(v.object({
+      cvId: v.string(),
+      overallScore: v.number(),
+      breakdown: v.object({
+        skills: v.number(),
+        experience: v.number(),
+        seniority: v.number(),
+        industry: v.number(),
+        location: v.number(),
+      }),
+      matchedSkills: v.array(v.string()),
+      missingSkills: v.array(v.string()),
+      reason: v.string(),
+    }))),
   }).index("by_user", ["userId"]),
 
   // Singleton stats document — maintained by mutations for O(1) dashboard reads

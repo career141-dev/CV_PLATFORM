@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useAction, useQuery } from "convex/react";
+import { useAction, useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import { Authenticated } from "convex/react";
 import AppLayout from "@/components/app-layout.tsx";
@@ -13,10 +13,11 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   Briefcase, MapPin, User, Loader2, Sparkles,
   CheckCircle2, XCircle, ChevronRight, Target,
-  GraduationCap, Clock, Building2, X,
+  GraduationCap, Clock, Building2, X, Trash2,
 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel.js";
 import { cn } from "@/lib/utils.ts";
+import { formatDistanceToNow } from "date-fns";
 
 type CandidateMatchBreakdown = {
   skills: number;
@@ -64,7 +65,6 @@ Requirements:
 - MBA or equivalent qualification preferred
 - Fluency in English and Sinhala`;
 
-// Breakdown dimension bar
 function BreakdownBar({ label, value }: { label: string; value: number }) {
   const color =
     value >= 75 ? "bg-green-500" :
@@ -86,7 +86,6 @@ function BreakdownBar({ label, value }: { label: string; value: number }) {
   );
 }
 
-// Score ring
 function ScoreRing({ score }: { score: number }) {
   const color =
     score >= 75 ? "text-green-500" :
@@ -119,22 +118,16 @@ function MatchCard({ match, index }: { match: CandidateMatch; index: number }) {
         <Skeleton className="h-28" />
       ) : (
         <>
-          {/* Main row */}
           <div
             className="flex items-start gap-3 p-4 cursor-pointer"
             onClick={() => setExpanded(!expanded)}
           >
-            {/* Rank */}
             <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center text-xs font-bold text-muted-foreground shrink-0 mt-0.5">
               {index + 1}
             </div>
-
-            {/* Avatar */}
             <div className="w-9 h-9 rounded-full bg-accent flex items-center justify-center shrink-0">
               <User className="w-4 h-4 text-accent-foreground" />
             </div>
-
-            {/* Info */}
             <div className="flex-1 min-w-0">
               <div className="flex items-start justify-between gap-2 mb-0.5">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -156,7 +149,6 @@ function MatchCard({ match, index }: { match: CandidateMatch; index: number }) {
                   />
                 </div>
               </div>
-
               {cv.currentTitle && (
                 <p className="text-xs text-muted-foreground flex items-center gap-1 mb-0.5">
                   <Briefcase className="w-3 h-3 shrink-0" />
@@ -173,7 +165,6 @@ function MatchCard({ match, index }: { match: CandidateMatch; index: number }) {
             </div>
           </div>
 
-          {/* AI reason (always visible) */}
           {match.reason && (
             <div className="px-4 pb-3 -mt-1">
               <p className="text-xs text-primary/80 bg-accent/40 rounded-md px-2.5 py-1.5">
@@ -182,7 +173,6 @@ function MatchCard({ match, index }: { match: CandidateMatch; index: number }) {
             </div>
           )}
 
-          {/* Expanded details */}
           <AnimatePresence>
             {expanded && (
               <motion.div
@@ -193,7 +183,6 @@ function MatchCard({ match, index }: { match: CandidateMatch; index: number }) {
                 className="overflow-hidden border-t"
               >
                 <div className="p-4 space-y-4">
-                  {/* Score breakdown */}
                   <div>
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
                       Match Breakdown
@@ -205,7 +194,6 @@ function MatchCard({ match, index }: { match: CandidateMatch; index: number }) {
                     </div>
                   </div>
 
-                  {/* Matched / missing skills */}
                   <div className="grid grid-cols-2 gap-3">
                     {match.matchedSkills.length > 0 && (
                       <div>
@@ -237,7 +225,6 @@ function MatchCard({ match, index }: { match: CandidateMatch; index: number }) {
                     )}
                   </div>
 
-                  {/* View full profile link */}
                   <Link
                     to={`/cv/${match.cvId}`}
                     className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline font-medium"
@@ -316,12 +303,68 @@ function JobRequirementsPanel({ req }: { req: JobRequirements }) {
   );
 }
 
+type JdHistoryEntry = {
+  _id: Id<"searchHistory">;
+  _creationTime: number;
+  query: string;
+  resultCount: number;
+  jobRequirements?: JobRequirements;
+  matchResults?: CandidateMatch[];
+};
+
+function JdHistoryPanel({ onRestore }: { onRestore: (entry: JdHistoryEntry) => void }) {
+  const history = useQuery(api.searchHistory.getSearchHistory, {});
+  const deleteSearch = useMutation(api.searchHistory.deleteSearch);
+
+  const jdHistory = history?.filter((h) => h.type === "job_description") ?? [];
+  if (!history || jdHistory.length === 0) return null;
+
+  return (
+    <div className="mb-6">
+      <div className="flex items-center gap-2 mb-2">
+        <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Recent JD Matches</span>
+      </div>
+      <div className="space-y-1.5">
+        {jdHistory.slice(0, 5).map((entry) => (
+          <div
+            key={entry._id}
+            className="flex items-center gap-2 bg-muted/40 hover:bg-muted rounded-lg px-3 py-2 group cursor-pointer"
+            onClick={() => onRestore(entry as unknown as JdHistoryEntry)}
+          >
+            <Briefcase className="w-3 h-3 text-muted-foreground shrink-0" />
+            <span className="text-xs text-foreground flex-1 truncate">
+              {entry.jobRequirements?.title ?? entry.query.slice(0, 60)}
+            </span>
+            <span className="text-xs text-muted-foreground shrink-0">
+              {entry.resultCount} match{entry.resultCount !== 1 ? "es" : ""}
+            </span>
+            <span className="text-xs text-muted-foreground shrink-0 hidden sm:block">
+              {formatDistanceToNow(new Date(entry._creationTime), { addSuffix: true })}
+            </span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                deleteSearch({ searchId: entry._id }).catch(() => toast.error("Failed to delete"));
+              }}
+              className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all cursor-pointer shrink-0"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function JdMatchContent() {
   const [jd, setJd] = useState("");
   const [isMatching, setIsMatching] = useState(false);
   const [result, setResult] = useState<MatchResponse | null>(null);
 
   const matchByJd = useAction(api.cvProcessing.matchByJobDescription);
+  const saveSearch = useMutation(api.searchHistory.saveSearch);
 
   const handleMatch = async () => {
     if (!jd.trim()) {
@@ -333,6 +376,16 @@ function JdMatchContent() {
     try {
       const res = await matchByJd({ jobDescription: jd, limit: 20 });
       setResult(res);
+
+      // Persist results
+      saveSearch({
+        query: jd,
+        type: "job_description",
+        resultCount: res.matches.length,
+        jobRequirements: res.jobRequirements,
+        matchResults: res.matches,
+      }).catch(() => { /* non-critical */ });
+
       if (res.matches.length === 0) {
         toast.info("No matching candidates found. Try a different job description.");
       }
@@ -340,6 +393,13 @@ function JdMatchContent() {
       toast.error("Matching failed. Please check your Hercules Cloud balance and try again.");
     } finally {
       setIsMatching(false);
+    }
+  };
+
+  const handleRestore = (entry: JdHistoryEntry) => {
+    setJd(entry.query);
+    if (entry.jobRequirements && entry.matchResults) {
+      setResult({ jobRequirements: entry.jobRequirements, matches: entry.matchResults });
     }
   };
 
@@ -351,6 +411,9 @@ function JdMatchContent() {
           Paste a job description and AI will find and rank the best-fit candidates from your CV pool — with a detailed match breakdown.
         </p>
       </div>
+
+      {/* Recent JD match history */}
+      <JdHistoryPanel onRestore={handleRestore} />
 
       {/* JD input panel */}
       <div className="bg-card border rounded-xl p-5 mb-6 shadow-sm">
@@ -423,10 +486,8 @@ function JdMatchContent() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
           >
-            {/* Parsed JD summary */}
             <JobRequirementsPanel req={result.jobRequirements} />
 
-            {/* Result count */}
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm font-medium">
                 {result.matches.length > 0 ? (
