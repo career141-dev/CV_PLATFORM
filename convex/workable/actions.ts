@@ -206,11 +206,11 @@ export const resumeImport = action({
     });
     if (!user) throw new ConvexError({ message: "User not found", code: "NOT_FOUND" });
 
-    // Mark as running again
+    // Mark as running again and clear any previous error message
     await ctx.runMutation(internal.workable.db.updateImportJob, {
       importId: args.importId,
       status: "running",
-      errorMessage: undefined,
+      errorMessage: "",
     });
 
     // Resume from last saved cursor (or from beginning if none)

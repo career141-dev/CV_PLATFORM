@@ -411,7 +411,7 @@ function ImportContent() {
                   />
                 </div>
 
-                {importStatus.errorMessage && (
+                {!!importStatus.errorMessage && importStatus.status !== "running" && (
                   <div className="flex items-start gap-2 bg-destructive/10 border border-destructive/20 rounded-lg p-3 text-xs text-destructive">
                     <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                     {importStatus.errorMessage}
