@@ -9,6 +9,7 @@ import Search from "./pages/search/page.tsx";
 import CvProfile from "./pages/cv/page.tsx";
 
 import JdMatch from "./pages/jd-match/page.tsx";
+import WorkableImport from "./pages/workable-import/page.tsx";
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="/upload" element={<Upload />} />
           <Route path="/search" element={<Search />} />
           <Route path="/jd-match" element={<JdMatch />} />
+          <Route path="/workable-import" element={<WorkableImport />} />
           <Route path="/cv/:cvId" element={<CvProfile />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

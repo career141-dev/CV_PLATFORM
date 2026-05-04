@@ -61,4 +61,14 @@ export default defineSchema({
     type: v.union(v.literal("natural_language"), v.literal("job_description")),
     resultCount: v.number(),
   }).index("by_user", ["userId"]),
+  workableImports: defineTable({
+    status: v.union(v.literal("running"), v.literal("done"), v.literal("error")),
+    totalCandidates: v.number(),
+    imported: v.number(),
+    skipped: v.number(),
+    failed: v.number(),
+    userId: v.id("users"),
+    startedAt: v.string(),
+    errorMessage: v.optional(v.string()),
+  }).index("by_user", ["userId"]),
 });

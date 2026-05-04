@@ -1,4 +1,4 @@
-import { ConvexError } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 
 export const updateCurrentUser = mutation({
@@ -12,7 +12,6 @@ export const updateCurrentUser = mutation({
       });
     }
 
-    // Check if we've already stored this identity before.
     const user = await ctx.db
       .query("users")
       .withIndex("by_token", (q) =>
@@ -22,12 +21,21 @@ export const updateCurrentUser = mutation({
     if (user !== null) {
       return user._id;
     }
-    // If it's a new identity, create a new User.
     return await ctx.db.insert("users", {
       name: identity.name,
       email: identity.email,
       tokenIdentifier: identity.tokenIdentifier,
     });
+  },
+});
+
+export const getUserByToken = query({
+  args: { tokenIdentifier: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("users")
+      .withIndex("by_token", (q) => q.eq("tokenIdentifier", args.tokenIdentifier))
+      .unique();
   },
 });
 

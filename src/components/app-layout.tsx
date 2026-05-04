@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Brain, LayoutDashboard, Search, Upload, LogOut, Menu, X, Target } from "lucide-react";
+import { Brain, LayoutDashboard, Search, Upload, LogOut, Menu, X, Target, DatabaseZap } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth.ts";
 import { Button } from "@/components/ui/button.tsx";
 import { cn } from "@/lib/utils.ts";
@@ -11,6 +11,7 @@ const navItems = [
   { icon: Search, label: "Search CVs", href: "/search" },
   { icon: Target, label: "JD Matching", href: "/jd-match" },
   { icon: Upload, label: "Upload CVs", href: "/upload" },
+  { icon: DatabaseZap, label: "Workable Import", href: "/workable-import" },
 ];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
