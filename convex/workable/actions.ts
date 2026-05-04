@@ -27,14 +27,38 @@ type WorkableCandidateDetail = {
     email?: string;
     phone?: string;
     resume_url?: string;
+    // Workable sometimes nests resume under resume object
+    resume?: {
+      url?: string;
+      file_url?: string;
+    };
+    // Sometimes appears directly as attachments
+    attachments?: Array<{ url?: string; file_url?: string; type?: string }>;
   };
 };
+
+function extractResumeUrl(detail: WorkableCandidateDetail["candidate"]): string | undefined {
+  // Try direct resume_url first
+  if (detail.resume_url) return detail.resume_url;
+  // Try nested resume object
+  if (detail.resume?.url) return detail.resume.url;
+  if (detail.resume?.file_url) return detail.resume.file_url;
+  // Try attachments array — look for resume type
+  const resumeAttachment = detail.attachments?.find(
+    (a) => !a.type || a.type === "resume" || a.type === "cv"
+  );
+  if (resumeAttachment?.url) return resumeAttachment.url;
+  if (resumeAttachment?.file_url) return resumeAttachment.file_url;
+  return undefined;
+}
 
 async function fetchCandidateDetail(
   subdomain: string,
   apiKey: string,
   candidateId: string
 ): Promise<WorkableCandidate> {
+  // Rate-limit: wait 350ms before each call to stay under Workable's limits
+  await new Promise((resolve) => setTimeout(resolve, 350));
   const url = workableUrl(subdomain, `/candidates/${candidateId}`);
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -46,7 +70,7 @@ async function fetchCandidateDetail(
     name: data.candidate.name,
     email: data.candidate.email,
     phone: data.candidate.phone,
-    resume_url: data.candidate.resume_url,
+    resume_url: extractResumeUrl(data.candidate),
   };
 }
 
