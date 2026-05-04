@@ -124,19 +124,22 @@ export const getStats = query({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
 
-    const all = await ctx.db.query("cvs").collect();
-    const ready = all.filter((c) => c.status === "ready");
-    const processing = all.filter((c) => c.status === "processing" || c.status === "uploading");
-    const errors = all.filter((c) => c.status === "error");
-    const paused = all.filter((c) => c.status === "paused");
+    // Use indexed queries per status instead of full table scan
+    const [readyDocs, processingDocs, uploadingDocs, errorDocs, pausedDocs] = await Promise.all([
+      ctx.db.query("cvs").withIndex("by_status", (q) => q.eq("status", "ready")).collect(),
+      ctx.db.query("cvs").withIndex("by_status", (q) => q.eq("status", "processing")).collect(),
+      ctx.db.query("cvs").withIndex("by_status", (q) => q.eq("status", "uploading")).collect(),
+      ctx.db.query("cvs").withIndex("by_status", (q) => q.eq("status", "error")).collect(),
+      ctx.db.query("cvs").withIndex("by_status", (q) => q.eq("status", "paused")).collect(),
+    ]);
 
-    return {
-      total: all.length,
-      ready: ready.length,
-      processing: processing.length,
-      errors: errors.length,
-      paused: paused.length,
-    };
+    const ready = readyDocs.length;
+    const processing = processingDocs.length + uploadingDocs.length;
+    const errors = errorDocs.length;
+    const paused = pausedDocs.length;
+    const total = ready + processing + errors + paused;
+
+    return { total, ready, processing, errors, paused };
   },
 });
 
