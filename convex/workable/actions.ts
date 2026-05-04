@@ -179,6 +179,24 @@ export const startBulkImport = action({
 
 // ─── Read import status (public action) ──────────────────────────────────────
 
+export const getLatestImportStatus = action({
+  args: {},
+  handler: async (ctx): Promise<{
+    _id: Id<"workableImports">;
+    status: "running" | "done" | "error";
+    totalCandidates: number;
+    imported: number;
+    skipped: number;
+    failed: number;
+    startedAt: string;
+    errorMessage?: string;
+  } | null> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    return await ctx.runQuery(internal.workable.db.getLatestImportJob, {});
+  },
+});
+
 export const getImportStatus = action({
   args: { importId: v.id("workableImports") },
   handler: async (ctx, args): Promise<{

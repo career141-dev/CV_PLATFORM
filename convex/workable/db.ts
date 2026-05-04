@@ -92,6 +92,16 @@ export const insertCv = internalMutation({
   },
 });
 
+export const getLatestImportJob = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db
+      .query("workableImports")
+      .order("desc")
+      .first();
+  },
+});
+
 export const findCvByWorkableId = internalQuery({
   args: { workableCandidateId: v.string() },
   handler: async (ctx, args) => {
