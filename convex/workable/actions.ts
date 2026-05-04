@@ -81,7 +81,7 @@ async function fetchCandidateDetail(
   const url = workableUrl(subdomain, `/candidates/${candidateId}`);
   const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
   if (res.status === 429) throw new Error("RATE_LIMIT_429");
-  if (!res.ok) return { name: candidateId };
+  if (!res.ok) throw new Error(`HTTP_${res.status}`);
   const data = (await res.json()) as WorkableCandidateDetail;
   return {
     name: data.candidate.name,
@@ -359,6 +359,13 @@ export const runImportBatch = internalAction({
               failed,
             });
             return;
+          }
+          // Log the actual HTTP status so it's visible in the job error message
+          if (msg.startsWith("HTTP_")) {
+            await ctx.runMutation(internal.workable.db.updateImportJob, {
+              importId: args.importId,
+              errorMessage: `API error fetching candidate ${candidate.id}: ${msg}`,
+            });
           }
           failed++;
           continue;
