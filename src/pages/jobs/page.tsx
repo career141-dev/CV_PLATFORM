@@ -569,7 +569,7 @@ function CreateJobDialog({ open, onClose }: { open: boolean; onClose: () => void
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Briefcase className="w-4 h-4 text-primary" /> Create Job Opening
