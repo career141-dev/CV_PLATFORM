@@ -110,7 +110,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       )}
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto pt-14 md:pt-0">{children}</main>
+      <main className="flex-1 overflow-auto min-h-0 pt-14 md:pt-0">{children}</main>
     </div>
   );
 }
