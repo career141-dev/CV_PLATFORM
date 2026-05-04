@@ -275,42 +275,6 @@ export const searchCvs = query({
   },
 });
 
-export const getNotes = query({
-  args: { cvId: v.id("cvs") },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
-    return await ctx.db
-      .query("cvNotes")
-      .withIndex("by_cv", (q) => q.eq("cvId", args.cvId))
-      .order("desc")
-      .collect();
-  },
-});
-
-export const addNote = mutation({
-  args: { cvId: v.id("cvs"), text: v.string() },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
-      .unique();
-    if (!user) throw new ConvexError({ message: "User not found", code: "NOT_FOUND" });
-    await ctx.db.insert("cvNotes", { cvId: args.cvId, userId: user._id, text: args.text });
-  },
-});
-
-export const deleteNote = mutation({
-  args: { noteId: v.id("cvNotes") },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
-    await ctx.db.delete(args.noteId);
-  },
-});
-
 export const deleteCv = mutation({
   args: { cvId: v.id("cvs") },
   handler: async (ctx, args) => {
