@@ -285,7 +285,6 @@ export const retrySkipped = action({
       errorMessage: "",
       skipped: 0,
       failed: 0,
-      lastCursor: undefined,
       subdomain,
       apiKey,
     });
