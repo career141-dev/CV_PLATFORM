@@ -182,6 +182,19 @@ export default defineSchema({
     .index("by_job_and_cv", ["jobId", "cvId"])
     .index("by_job_and_stage", ["jobId", "stage"]),
 
+  // M365 connected mailboxes for email CV import
+  m365Accounts: defineTable({
+    userId: v.id("users"),
+    email: v.string(),
+    displayName: v.optional(v.string()),
+    accessToken: v.string(),
+    refreshToken: v.string(),
+    expiresAt: v.string(), // ISO timestamp
+    tenantId: v.optional(v.string()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_email", ["email"]),
+
   workableImports: defineTable({
     status: v.union(v.literal("running"), v.literal("done"), v.literal("error"), v.literal("stopped")),
     totalCandidates: v.number(),

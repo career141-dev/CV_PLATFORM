@@ -11,6 +11,7 @@
 import type * as cvProcessing from "../cvProcessing.js";
 import type * as cvs from "../cvs.js";
 import type * as jobs from "../jobs.js";
+import type * as m365_db from "../m365/db.js";
 import type * as pipeline from "../pipeline.js";
 import type * as searchHistory from "../searchHistory.js";
 import type * as users from "../users.js";
@@ -29,6 +30,7 @@ declare const fullApi: ApiFromModules<{
   cvProcessing: typeof cvProcessing;
   cvs: typeof cvs;
   jobs: typeof jobs;
+  "m365/db": typeof m365_db;
   pipeline: typeof pipeline;
   searchHistory: typeof searchHistory;
   users: typeof users;
