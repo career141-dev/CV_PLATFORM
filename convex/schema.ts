@@ -75,6 +75,12 @@ export default defineSchema({
     paused: v.number(),
   }),
 
+  // Lightweight lookup table for Workable deduplication — avoids scanning the large cvs table
+  workableCandidateLookup: defineTable({
+    workableCandidateId: v.string(),
+    cvId: v.id("cvs"),
+  }).index("by_workable_candidate_id", ["workableCandidateId"]),
+
   workableImports: defineTable({
     status: v.union(v.literal("running"), v.literal("done"), v.literal("error")),
     totalCandidates: v.number(),

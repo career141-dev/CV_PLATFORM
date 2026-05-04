@@ -74,10 +74,18 @@ export const insertCv = internalMutation({
     if (stats) {
       await ctx.db.patch(stats._id, {
         total: stats.total + 1,
-        processing: stats.processing + 1, // uploading counts as processing
+        processing: stats.processing + 1,
       });
     } else {
       await ctx.db.insert("cvStats", { total: 1, ready: 0, processing: 1, errors: 0, paused: 0 });
+    }
+
+    // Register in the dedup lookup table
+    if (args.workableCandidateId) {
+      await ctx.db.insert("workableCandidateLookup", {
+        workableCandidateId: args.workableCandidateId,
+        cvId,
+      });
     }
 
     return cvId;
@@ -87,8 +95,13 @@ export const insertCv = internalMutation({
 export const findCvByWorkableId = internalQuery({
   args: { workableCandidateId: v.string() },
   handler: async (ctx, args) => {
-    // Scan cvs for matching workableCandidateId — table is small enough and this avoids optional index
-    const all = await ctx.db.query("cvs").collect();
-    return all.find((cv) => cv.workableCandidateId === args.workableCandidateId) ?? null;
+    // Fast indexed lookup — no full table scan
+    const entry = await ctx.db
+      .query("workableCandidateLookup")
+      .withIndex("by_workable_candidate_id", (q) =>
+        q.eq("workableCandidateId", args.workableCandidateId)
+      )
+      .first();
+    return entry ?? null;
   },
 });
