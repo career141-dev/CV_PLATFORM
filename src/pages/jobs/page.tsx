@@ -686,9 +686,9 @@ function JobDetailView({ job, onBack }: { job: Job; onBack: () => void }) {
           <summary className="text-xs font-medium text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-1.5">
             <ChevronDown className="w-3.5 h-3.5" /> View job description
           </summary>
-          <pre className="text-xs text-muted-foreground mt-2 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto bg-muted/30 rounded-lg p-3">
+          <div className="text-xs text-muted-foreground mt-2 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto bg-muted/30 rounded-lg p-3 break-words">
             {job.description}
-          </pre>
+          </div>
         </details>
       </div>
 
