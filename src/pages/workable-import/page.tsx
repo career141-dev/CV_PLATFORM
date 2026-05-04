@@ -11,20 +11,22 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   Building2, Key, CheckCircle2, AlertCircle, Loader2,
   Download, SkipForward, XCircle, ArrowRight,
-  ExternalLink, Info, Play,
+  ExternalLink, Info, Play, RotateCcw,
 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel.js";
 import { cn } from "@/lib/utils.ts";
 
 type ImportStatus = {
   _id: Id<"workableImports">;
-  status: "running" | "done" | "error";
+  status: "running" | "done" | "error" | "paused";
   totalCandidates: number;
   imported: number;
   skipped: number;
   failed: number;
   startedAt: string;
   errorMessage?: string;
+  lastCursor?: string;
+  subdomain?: string;
 };
 
 function ProgressBar({ value, max, color }: { value: number; max: number; color: string }) {
@@ -72,6 +74,7 @@ function ImportContent() {
   const startBulkImport = useAction(api.workable.actions.startBulkImport);
   const getImportStatus = useAction(api.workable.actions.getImportStatus);
   const getLatestImportStatus = useAction(api.workable.actions.getLatestImportStatus);
+  const resumeImport = useAction(api.workable.actions.resumeImport);
   const resumeProcessing = useAction(api.cvProcessing.resumeProcessing);
   const pausedCvs = useQuery(api.cvs.getPausedCvs, {});
 
@@ -106,6 +109,8 @@ function ImportContent() {
           setIsImporting(false);
           if (status.status === "done") {
             toast.success(`Import complete! ${status.imported} CVs imported.`);
+          } else if (status.status === "paused") {
+            toast.warning(`Import paused: ${status.errorMessage ?? "Rate limit hit. Click Resume Import to continue."}`);
           } else {
             toast.error(`Import failed: ${status.errorMessage ?? "Unknown error"}`);
           }
@@ -156,9 +161,23 @@ function ImportContent() {
   const handleResume = async () => {
     try {
       await resumeProcessing({});
-      toast.success("Resuming CV processing...");
+      toast.success("Resuming CV processing — paused CVs will become searchable shortly.");
     } catch {
       toast.error("Failed to resume processing. Please try again.");
+    }
+  };
+
+  const handleResumeImport = async () => {
+    if (!importStatus) return;
+    setIsImporting(true);
+    try {
+      await resumeImport({ importId: importStatus._id });
+      setImportStatus((prev) => prev ? { ...prev, status: "running" } : prev);
+      toast.info("Import resumed from where it left off.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to resume import";
+      toast.error(msg);
+      setIsImporting(false);
     }
   };
 
@@ -199,7 +218,7 @@ function ImportContent() {
                     {pausedCvs.length} CV{pausedCvs.length !== 1 ? "s" : ""} paused — insufficient AI credits
                   </p>
                   <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
-                    Top up your credits in Settings → Billing → Cloud Usage, then resume processing.
+                    These CVs already have their text extracted and will be marked as searchable immediately — no AI credits needed.
                   </p>
                 </div>
               </div>
@@ -218,7 +237,7 @@ function ImportContent() {
             <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside">
               <li>We connect to your Workable account using your API key</li>
               <li>All candidates with a CV/resume attached are downloaded</li>
-              <li>Each CV is stored and processed by AI to extract structured data</li>
+              <li>Each CV text is extracted and stored — ready for search immediately</li>
               <li>Once done, candidates become searchable in this system</li>
             </ol>
             <a
@@ -350,6 +369,11 @@ function ImportContent() {
                       <AlertCircle className="w-3 h-3" /> Error
                     </Badge>
                   )}
+                  {importStatus.status === "paused" && (
+                    <Badge variant="secondary" className="gap-1 text-xs text-amber-600 dark:text-amber-400">
+                      <AlertCircle className="w-3 h-3" /> Paused
+                    </Badge>
+                  )}
                 </div>
 
                 {importStatus.totalCandidates > 0 && (
@@ -392,6 +416,38 @@ function ImportContent() {
                     <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                     {importStatus.errorMessage}
                   </div>
+                )}
+
+                {/* Resume Import button for paused/error state */}
+                {(importStatus.status === "paused" || importStatus.status === "error") && importStatus.subdomain && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="mt-4 pt-4 border-t flex items-center justify-between gap-3"
+                  >
+                    <div>
+                      <p className="text-sm font-medium">
+                        {importStatus.status === "paused" ? "Import paused" : "Import stopped"}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {importStatus.lastCursor
+                          ? "Resuming will continue from where it left off — no duplicates, no restarting from scratch."
+                          : "No progress was saved. Resume will restart from the beginning (deduplication will skip already-imported CVs)."}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={handleResumeImport}
+                      disabled={isImporting}
+                      className="gap-1.5 shrink-0"
+                    >
+                      {isImporting ? (
+                        <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Resuming...</>
+                      ) : (
+                        <><RotateCcw className="w-3.5 h-3.5" /> Resume Import</>
+                      )}
+                    </Button>
+                  </motion.div>
                 )}
 
                 {importStatus.status === "done" && (

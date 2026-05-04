@@ -160,6 +160,8 @@ export const startBulkImport = action({
     const importId = await ctx.runMutation(internal.workable.db.createImportJob, {
       userId: user._id,
       totalCandidates: 0,
+      subdomain: args.subdomain,
+      apiKey: args.apiKey,
     });
 
     ctx.scheduler.runAfter(0, internal.workable.actions.runImport, {
@@ -177,19 +179,63 @@ export const startBulkImport = action({
   },
 });
 
+// ─── Resume import from last saved cursor ────────────────────────────────────
+
+export const resumeImport = action({
+  args: {
+    importId: v.id("workableImports"),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
+
+    const job = await ctx.runQuery(internal.workable.db.getImportJob, { importId: args.importId });
+    if (!job) throw new ConvexError({ message: "Import job not found", code: "NOT_FOUND" });
+    if (!job.subdomain || !job.apiKey) {
+      throw new ConvexError({ message: "No credentials stored for this import. Please start a new import.", code: "BAD_REQUEST" });
+    }
+
+    const user = await ctx.runQuery(api.users.getUserByToken, {
+      tokenIdentifier: identity.tokenIdentifier,
+    });
+    if (!user) throw new ConvexError({ message: "User not found", code: "NOT_FOUND" });
+
+    // Mark as running again
+    await ctx.runMutation(internal.workable.db.updateImportJob, {
+      importId: args.importId,
+      status: "running",
+      errorMessage: undefined,
+    });
+
+    // Resume from last saved cursor (or from beginning if none)
+    ctx.scheduler.runAfter(0, internal.workable.actions.runImport, {
+      importId: args.importId,
+      subdomain: job.subdomain,
+      apiKey: job.apiKey,
+      userId: user._id,
+      nextUrl: job.lastCursor ?? undefined,
+      imported: job.imported,
+      skipped: job.skipped,
+      failed: job.failed,
+    });
+  },
+});
+
 // ─── Read import status (public action) ──────────────────────────────────────
 
 export const getLatestImportStatus = action({
   args: {},
   handler: async (ctx): Promise<{
     _id: Id<"workableImports">;
-    status: "running" | "done" | "error";
+    status: "running" | "done" | "error" | "paused";
     totalCandidates: number;
     imported: number;
     skipped: number;
     failed: number;
     startedAt: string;
     errorMessage?: string;
+    lastCursor?: string;
+    subdomain?: string;
   } | null> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
@@ -201,13 +247,15 @@ export const getImportStatus = action({
   args: { importId: v.id("workableImports") },
   handler: async (ctx, args): Promise<{
     _id: Id<"workableImports">;
-    status: "running" | "done" | "error";
+    status: "running" | "done" | "error" | "paused";
     totalCandidates: number;
     imported: number;
     skipped: number;
     failed: number;
     startedAt: string;
     errorMessage?: string;
+    lastCursor?: string;
+    subdomain?: string;
   } | null> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
@@ -305,12 +353,13 @@ export const runImport = internalAction({
         imported++;
       }
 
-      // Save progress
+      // Save progress and last cursor
       await ctx.runMutation(internal.workable.db.updateImportJob, {
         importId: args.importId,
         imported,
         skipped,
         failed,
+        lastCursor: page.paging?.next ?? undefined,
       });
 
       // Continue to next page if available
@@ -333,9 +382,11 @@ export const runImport = internalAction({
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Import failed";
+      // Use "paused" status for retryable errors so user can resume
+      const isRetryable = message.includes("429") || message.includes("rate limit") || message.includes("timeout");
       await ctx.runMutation(internal.workable.db.updateImportJob, {
         importId: args.importId,
-        status: "error",
+        status: isRetryable ? "paused" : "error",
         errorMessage: message,
       });
     }

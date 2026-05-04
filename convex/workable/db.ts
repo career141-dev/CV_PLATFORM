@@ -6,6 +6,8 @@ export const createImportJob = internalMutation({
   args: {
     userId: v.id("users"),
     totalCandidates: v.number(),
+    subdomain: v.optional(v.string()),
+    apiKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("workableImports", {
@@ -16,6 +18,8 @@ export const createImportJob = internalMutation({
       failed: 0,
       userId: args.userId,
       startedAt: new Date().toISOString(),
+      subdomain: args.subdomain,
+      apiKey: args.apiKey,
     });
   },
 });
@@ -28,9 +32,10 @@ export const updateImportJob = internalMutation({
     failed: v.optional(v.number()),
     totalCandidates: v.optional(v.number()),
     status: v.optional(
-      v.union(v.literal("running"), v.literal("done"), v.literal("error"))
+      v.union(v.literal("running"), v.literal("done"), v.literal("error"), v.literal("paused"))
     ),
     errorMessage: v.optional(v.string()),
+    lastCursor: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { importId, ...rest } = args;
