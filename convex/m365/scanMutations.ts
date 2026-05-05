@@ -12,6 +12,7 @@ export const createCvRecord = internalMutation({
     fileSize: v.number(),
     tokenIdentifier: v.string(),
     fileHash: v.optional(v.string()),
+    rawText: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Id<"cvs">> => {
     const user = await ctx.db
@@ -33,7 +34,9 @@ export const createCvRecord = internalMutation({
       fileName: args.fileName,
       fileType: args.fileType,
       fileSize: args.fileSize,
-      status: "uploading",
+      // If rawText was pre-extracted (email CV check), mark as ready immediately
+      status: args.rawText ? "ready" : "uploading",
+      rawText: args.rawText,
       uploadedBy: user._id,
       fileHash: args.fileHash,
     });

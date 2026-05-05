@@ -370,6 +370,7 @@ export const importMailAttachment = action({
       buffer: new Uint8Array(buffer).buffer,
       fileName: args.fileName,
       tokenIdentifier: identity.tokenIdentifier,
+      rawText: rawText.slice(0, 50000), // pass pre-extracted text to skip re-extraction
     });
   },
 });
@@ -381,6 +382,7 @@ export const storeAndProcess = internalAction({
     buffer: v.bytes(),
     fileName: v.string(),
     tokenIdentifier: v.string(),
+    rawText: v.optional(v.string()), // pre-extracted text (skip re-extraction if provided)
   },
   handler: async (ctx, args): Promise<{ cvId: Id<"cvs">; skipped: boolean }> => {
     // Compute SHA-256 hash for deduplication
@@ -409,7 +411,7 @@ export const storeAndProcess = internalAction({
     });
     const storageId = await ctx.storage.store(blob);
 
-    // Create CV record with hash
+    // Create CV record — pass rawText if already extracted to skip re-extraction
     const cvId = await ctx.runMutation(internal.m365.scanMutations.createCvRecord, {
       storageId,
       fileName: args.fileName,
@@ -417,14 +419,17 @@ export const storeAndProcess = internalAction({
       fileSize: args.buffer.byteLength,
       tokenIdentifier: args.tokenIdentifier,
       fileHash,
+      rawText: args.rawText ? args.rawText.slice(0, 50000) : undefined,
     });
 
-    // Extract text only (lazy — no AI cost)
-    await ctx.runAction(api.cvProcessing.extractTextOnly, {
-      cvId,
-      storageId,
-      fileType,
-    });
+    // Only run extractTextOnly if we didn't already have the text
+    if (!args.rawText) {
+      await ctx.runAction(api.cvProcessing.extractTextOnly, {
+        cvId,
+        storageId,
+        fileType,
+      });
+    }
 
     return { cvId, skipped: false };
   },

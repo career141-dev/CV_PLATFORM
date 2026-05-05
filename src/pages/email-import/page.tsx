@@ -525,28 +525,39 @@ function EmailImportContent() {
     setSelectedFileIds(new Set());
     setScanStats(null);
 
-    const allFiles: FoundFile[] = [];
     try {
-      for (const source of sources) {
-        if (source.type === "sharepoint") {
-          const files = await scanSharePointFolder({
-            accountId: source.accountId,
-            siteId: source.siteId!,
-            driveId: source.driveId!,
-            itemId: source.itemId,
-            folderName: source.label,
-          });
-          allFiles.push(...files);
+      // Scan all selected folders in parallel
+      const results = await Promise.allSettled(
+        sources.map(source => {
+          if (source.type === "sharepoint") {
+            return scanSharePointFolder({
+              accountId: source.accountId,
+              siteId: source.siteId!,
+              driveId: source.driveId!,
+              itemId: source.itemId,
+              folderName: source.label,
+            });
+          } else {
+            return scanMailFolder({
+              accountId: source.accountId,
+              folderId: source.id,
+              folderName: source.label,
+              sharedMailbox: source.sharedMailbox,
+            });
+          }
+        })
+      );
+
+      const allFiles: FoundFile[] = [];
+      let scanErrors = 0;
+      for (const result of results) {
+        if (result.status === "fulfilled") {
+          allFiles.push(...result.value);
         } else {
-          const files = await scanMailFolder({
-            accountId: source.accountId,
-            folderId: source.id,
-            folderName: source.label,
-            sharedMailbox: source.sharedMailbox,
-          });
-          allFiles.push(...files);
+          scanErrors++;
         }
       }
+      if (scanErrors > 0) toast.warning(`${scanErrors} folder${scanErrors !== 1 ? "s" : ""} failed to scan.`);
       setFoundFiles(allFiles);
       setSelectedFileIds(new Set(allFiles.map(f => f.id)));
 
@@ -578,33 +589,43 @@ function EmailImportContent() {
     let errors = 0;
     let skipped = 0;
     let notCv = 0;
-    for (const file of toImport) {
-      try {
-        let result: { cvId: string | null; skipped: boolean; notACv?: boolean };
-        if (file.source === "sharepoint") {
-          result = await importSharePointFile({
-            accountId: scanningAccount._id,
-            siteId: file.siteId!,
-            driveId: file.driveId!,
-            itemId: file.itemId!,
-            fileName: file.name,
-          });
+
+    // Process in parallel batches of 5 to avoid overwhelming the API
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < toImport.length; i += BATCH_SIZE) {
+      const batch = toImport.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.allSettled(
+        batch.map(file => {
+          if (file.source === "sharepoint") {
+            return importSharePointFile({
+              accountId: scanningAccount._id,
+              siteId: file.siteId!,
+              driveId: file.driveId!,
+              itemId: file.itemId!,
+              fileName: file.name,
+            });
+          } else {
+            return importMailAttachment({
+              accountId: scanningAccount._id,
+              messageId: file.messageId!,
+              attachmentId: file.attachmentId!,
+              fileName: file.name,
+            });
+          }
+        })
+      );
+
+      for (const result of batchResults) {
+        if (result.status === "fulfilled") {
+          if (result.value.skipped) {
+            if ("notACv" in result.value && result.value.notACv) notCv++;
+            else skipped++;
+          }
         } else {
-          result = await importMailAttachment({
-            accountId: scanningAccount._id,
-            messageId: file.messageId!,
-            attachmentId: file.attachmentId!,
-            fileName: file.name,
-          });
+          errors++;
         }
-        if (result.skipped) {
-          if (result.notACv) notCv++;
-          else skipped++;
-        }
-      } catch {
-        errors++;
       }
-      setImportProgress(p => ({ ...p, done: p.done + 1, errors, skipped, notCv }));
+      setImportProgress(p => ({ ...p, done: Math.min(p.done + batch.length, toImport.length), errors, skipped, notCv }));
     }
 
     const imported = toImport.length - errors - skipped - notCv;
