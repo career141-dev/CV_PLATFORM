@@ -22,6 +22,8 @@ export type FoundFile = {
   attachmentId?: string;
   folderPath?: string;
   emailSubject?: string;
+  // Body link fields (CV linked in email body, not attached)
+  bodyLinkUrl?: string;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -112,12 +114,47 @@ async function scanSpFolderRecursive(
   }
 }
 
+// ─── Extract CV links from email HTML body ────────────────────────────────────
+
+function extractCvLinksFromHtml(html: string): Array<{ url: string; name: string }> {
+  const links: Array<{ url: string; name: string }> = [];
+  // Match href attributes in anchor tags
+  const hrefRegex = /href=["']([^"']+)["']/gi;
+  let match: RegExpExecArray | null;
+  while ((match = hrefRegex.exec(html)) !== null) {
+    const url = match[1];
+    try {
+      // Must be an absolute HTTP(S) URL
+      const parsed = new URL(url);
+      if (!["http:", "https:"].includes(parsed.protocol)) continue;
+      const pathname = parsed.pathname.toLowerCase();
+      if (CV_EXTENSIONS.some(ext => pathname.endsWith(ext))) {
+        // Derive a file name from the URL path
+        const segments = parsed.pathname.split("/").filter(Boolean);
+        const rawName = segments[segments.length - 1] ?? "cv";
+        const name = decodeURIComponent(rawName).replace(/[^a-zA-Z0-9._-]/g, "_");
+        links.push({ url, name });
+      }
+    } catch {
+      // Invalid URL — skip
+    }
+  }
+  // Deduplicate by URL
+  const seen = new Set<string>();
+  return links.filter(l => {
+    if (seen.has(l.url)) return false;
+    seen.add(l.url);
+    return true;
+  });
+}
+
 // ─── Recursive mail folder scanner ───────────────────────────────────────────
 
 type MailMessage = {
   id: string;
   subject?: string;
   hasAttachments: boolean;
+  body?: { contentType: string; content: string };
 };
 
 type MailAttachment = {
@@ -138,10 +175,9 @@ async function scanMailFolderRecursive(
 ): Promise<void> {
   if (depth > 6) return;
 
-  // Scan messages in this folder — fetch all and check hasAttachments in code
-  // (OData $filter on hasAttachments is unreliable across mailbox types)
+  // Scan messages — fetch body too so we can extract CV links
   let nextLink: string | null =
-    `${mailboxBase}/mailFolders/${folderId}/messages?$select=id,subject,hasAttachments&$top=50`;
+    `${mailboxBase}/mailFolders/${folderId}/messages?$select=id,subject,hasAttachments,body&$top=50`;
 
   while (nextLink) {
     const raw = nextLink.startsWith("https://")
@@ -158,29 +194,47 @@ async function scanMailFolderRecursive(
     const messages = data.value ?? [];
 
     for (const msg of messages) {
-      if (!msg.hasAttachments) continue;
-      // List attachments for this message
-      try {
-        const attData = await graphGet<{ value: MailAttachment[] }>(
-          token,
-          `${mailboxBase}/messages/${msg.id}/attachments?$select=id,name,size,contentType,isInline`
-        );
-        for (const att of attData.value ?? []) {
-          if (!att.isInline && isCvFile(att.name, att.contentType)) {
-            results.push({
-              id: `mail-${att.id}`,
-              name: att.name,
-              size: att.size,
-              source: "email",
-              messageId: msg.id,
-              attachmentId: att.id,
-              folderPath: folderName,
-              emailSubject: msg.subject ?? "(no subject)",
-            });
+      // 1. File attachments
+      if (msg.hasAttachments) {
+        try {
+          const attData = await graphGet<{ value: MailAttachment[] }>(
+            token,
+            `${mailboxBase}/messages/${msg.id}/attachments?$select=id,name,size,contentType,isInline`
+          );
+          for (const att of attData.value ?? []) {
+            if (!att.isInline && isCvFile(att.name, att.contentType)) {
+              results.push({
+                id: `mail-${att.id}`,
+                name: att.name,
+                size: att.size,
+                source: "email",
+                messageId: msg.id,
+                attachmentId: att.id,
+                folderPath: folderName,
+                emailSubject: msg.subject ?? "(no subject)",
+              });
+            }
           }
+        } catch {
+          // Skip messages we can't read attachments from
         }
-      } catch {
-        // Skip messages we can't read attachments from
+      }
+
+      // 2. Body links — extract PDF/DOC/DOCX hrefs from the email HTML body
+      if (msg.body?.contentType === "html" && msg.body.content) {
+        const bodyLinks = extractCvLinksFromHtml(msg.body.content);
+        for (const link of bodyLinks) {
+          results.push({
+            id: `bodylink-${Buffer.from(link.url).toString("base64").slice(0, 32)}`,
+            name: link.name,
+            size: 0, // unknown until downloaded
+            source: "email",
+            messageId: msg.id,
+            folderPath: folderName,
+            emailSubject: msg.subject ?? "(no subject)",
+            bodyLinkUrl: link.url,
+          });
+        }
       }
     }
     nextLink = data["@odata.nextLink"] ?? null;
@@ -375,6 +429,56 @@ export const importMailAttachment = action({
       fileName: args.fileName,
       tokenIdentifier: identity.tokenIdentifier,
       rawText: rawText.slice(0, 50000), // pass pre-extracted text to skip re-extraction
+    });
+  },
+});
+
+// ─── Import a CV from a body link URL ────────────────────────────────────────
+
+export const importBodyLinkFile = action({
+  args: {
+    url: v.string(),
+    fileName: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ cvId: Id<"cvs"> | null; skipped: boolean; notACv?: boolean }> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
+
+    // Download the file — silently skip if URL is expired/unavailable
+    let buffer: ArrayBuffer;
+    try {
+      const res = await fetch(args.url, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        redirect: "follow",
+      });
+      if (!res.ok) return { cvId: null, skipped: true, notACv: true };
+      buffer = await res.arrayBuffer();
+    } catch {
+      return { cvId: null, skipped: true, notACv: true };
+    }
+
+    if (buffer.byteLength === 0) return { cvId: null, skipped: true, notACv: true };
+
+    const lower = args.fileName.toLowerCase();
+    const fileType = lower.endsWith(".pdf") ? "pdf"
+      : lower.endsWith(".docx") ? "docx"
+      : lower.endsWith(".doc") ? "doc"
+      : "pdf";
+
+    // CV keyword check
+    let rawText = "";
+    try {
+      rawText = await extractTextFromBuffer(buffer, fileType);
+    } catch {
+      return { cvId: null, skipped: true, notACv: true };
+    }
+    if (!looksLikeCv(rawText)) return { cvId: null, skipped: true, notACv: true };
+
+    return ctx.runAction(internal.m365.scan.storeAndProcess, {
+      buffer: new Uint8Array(buffer).buffer,
+      fileName: args.fileName,
+      tokenIdentifier: identity.tokenIdentifier,
+      rawText: rawText.slice(0, 50000),
     });
   },
 });

@@ -174,6 +174,7 @@ type FoundFile = {
   attachmentId?: string;
   folderPath?: string;
   emailSubject?: string;
+  bodyLinkUrl?: string;
 };
 
 type ScannerPanelProps = {
@@ -431,6 +432,7 @@ function EmailImportContent() {
   const scanMailFolder = useAction(api.m365.scan.scanMailFolder);
   const importSharePointFile = useAction(api.m365.scan.importSharePointFile);
   const importMailAttachment = useAction(api.m365.scan.importMailAttachment);
+  const importBodyLinkFile = useAction(api.m365.scan.importBodyLinkFile);
 
   const loadAccounts = async () => {
     try {
@@ -602,6 +604,12 @@ function EmailImportContent() {
               siteId: file.siteId!,
               driveId: file.driveId!,
               itemId: file.itemId!,
+              fileName: file.name,
+            });
+          } else if (file.bodyLinkUrl) {
+            // CV linked in email body — download directly from URL
+            return importBodyLinkFile({
+              url: file.bodyLinkUrl,
               fileName: file.name,
             });
           } else {
