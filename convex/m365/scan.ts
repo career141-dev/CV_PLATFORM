@@ -269,7 +269,7 @@ export const importSharePointFile = action({
     );
 
     return ctx.runAction(internal.m365.scan.storeAndProcess, {
-      buffer: new Uint8Array(buffer),
+      buffer: buffer,
       fileName: args.fileName,
       tokenIdentifier: identity.tokenIdentifier,
     });
@@ -304,7 +304,7 @@ export const importMailAttachment = action({
     const buffer = await res.arrayBuffer();
 
     return ctx.runAction(internal.m365.scan.storeAndProcess, {
-      buffer: new Uint8Array(buffer),
+      buffer: new Uint8Array(buffer).buffer,
       fileName: args.fileName,
       tokenIdentifier: identity.tokenIdentifier,
     });
@@ -336,7 +336,7 @@ export const storeAndProcess = internalAction({
     const storageId = await ctx.storage.store(blob);
 
     // Create CV record
-    const cvId = await ctx.runMutation(internal.m365.scan.createCvRecord, {
+    const cvId = await ctx.runMutation(internal.m365.scanMutations.createCvRecord, {
       storageId,
       fileName: args.fileName,
       fileType,
@@ -352,39 +352,5 @@ export const storeAndProcess = internalAction({
     });
 
     return { cvId };
-  },
-});
-
-// ─── Internal mutation: create CV record ─────────────────────────────────────
-
-export const createCvRecord = internalMutation({
-  args: {
-    storageId: v.id("_storage"),
-    fileName: v.string(),
-    fileType: v.string(),
-    fileSize: v.number(),
-    tokenIdentifier: v.string(),
-  },
-  handler: async (ctx, args): Promise<Id<"cvs">> => {
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", args.tokenIdentifier))
-      .unique();
-    if (!user) throw new ConvexError({ message: "User not found", code: "NOT_FOUND" });
-
-    // Adjust stats
-    const stats = await ctx.db.query("cvStats").first();
-    if (stats) {
-      await ctx.db.patch(stats._id, { uploading: (stats.uploading ?? 0) + 1, total: (stats.total ?? 0) + 1 });
-    }
-
-    return ctx.db.insert("cvs", {
-      storageId: args.storageId,
-      fileName: args.fileName,
-      fileType: args.fileType,
-      fileSize: args.fileSize,
-      status: "uploading",
-      uploadedBy: user._id,
-    });
   },
 });

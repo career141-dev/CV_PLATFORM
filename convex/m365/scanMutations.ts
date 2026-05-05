@@ -23,7 +23,6 @@ export const createCvRecord = internalMutation({
     const stats = await ctx.db.query("cvStats").first();
     if (stats) {
       await ctx.db.patch(stats._id, {
-        uploading: (stats.uploading ?? 0) + 1,
         total: (stats.total ?? 0) + 1,
       });
     }
