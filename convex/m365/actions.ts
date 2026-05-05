@@ -233,8 +233,17 @@ export const listMailFolders = action({
       ? `${base}/mailFolders/${args.parentFolderId}/childFolders?$top=50&$select=id,displayName,childFolderCount,totalItemCount`
       : `${base}/mailFolders?$top=50&$select=id,displayName,childFolderCount,totalItemCount`;
 
-    const data = await graphGet<{ value: MailFolder[] }>(token, path);
-    return data.value ?? [];
+    // Paginate through all results — Graph API returns max 50 per page
+    const allFolders: MailFolder[] = [];
+    let nextLink: string | null = `https://graph.microsoft.com/v1.0${path}`;
+    while (nextLink) {
+      const res = await fetch(nextLink, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`Graph API error ${res.status}`);
+      const data = (await res.json()) as { value: MailFolder[]; "@odata.nextLink"?: string };
+      allFolders.push(...(data.value ?? []));
+      nextLink = data["@odata.nextLink"] ?? null;
+    }
+    return allFolders;
   },
 });
 
