@@ -151,14 +151,29 @@ function SpFolderNode({ item, accountId, siteId, driveId, selectedIds, onToggle,
 
 type SelectedSource = {
   type: "mail" | "sharepoint";
-  id: string;
+  id: string; // folderId
   label: string;
   accountId: Id<"m365Accounts">;
   // For sharepoint
   siteId?: string;
   driveId?: string;
+  itemId?: string; // drive item id for the folder
   // For mail
   sharedMailbox?: string;
+};
+
+type FoundFile = {
+  id: string;
+  name: string;
+  size: number;
+  source: "sharepoint" | "email";
+  driveId?: string;
+  siteId?: string;
+  itemId?: string;
+  messageId?: string;
+  attachmentId?: string;
+  folderPath?: string;
+  emailSubject?: string;
 };
 
 type ScannerPanelProps = {
@@ -167,7 +182,7 @@ type ScannerPanelProps = {
   selectedSources: SelectedSource[];
   onAddSource: (source: SelectedSource) => void;
   onRemoveSource: (id: string) => void;
-  onStartScan: () => void;
+  onStartScan: (sources: SelectedSource[]) => void;
 };
 
 function ScannerPanel({ account, onBack, selectedSources, onAddSource, onRemoveSource, onStartScan }: ScannerPanelProps) {
@@ -226,7 +241,7 @@ function ScannerPanel({ account, onBack, selectedSources, onAddSource, onRemoveS
     if (selectedSpIds.has(id)) {
       onRemoveSource(id);
     } else {
-      onAddSource({ type: "sharepoint", id, label: `${selectedSite.displayName} / ${selectedDrive.name} / ${name}`, accountId: account._id, siteId: selectedSite.id, driveId: selectedDrive.id });
+      onAddSource({ type: "sharepoint", id, label: `${selectedSite.displayName} / ${selectedDrive.name} / ${name}`, accountId: account._id, siteId: selectedSite.id, driveId: selectedDrive.id, itemId: id });
     }
   };
 
@@ -378,7 +393,7 @@ function ScannerPanel({ account, onBack, selectedSources, onAddSource, onRemoveS
               </div>
             ))}
           </div>
-          <Button className="w-full gap-2" onClick={onStartScan}>
+          <Button className="w-full gap-2" onClick={() => onStartScan(selectedSources)}>
             <ScanSearch className="w-4 h-4" />
             Start Scan ({selectedSources.length} {selectedSources.length === 1 ? "folder" : "folders"})
           </Button>
@@ -399,10 +414,21 @@ function EmailImportContent() {
   const [scanningAccount, setScanningAccount] = useState<Account | null>(null);
   const [selectedSources, setSelectedSources] = useState<SelectedSource[]>([]);
 
+  // Scan & review state
+  const [phase, setPhase] = useState<"browse" | "scanning" | "review" | "importing">("browse");
+  const [foundFiles, setFoundFiles] = useState<FoundFile[]>([]);
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+  const [importProgress, setImportProgress] = useState<{ done: number; total: number; errors: number }>({ done: 0, total: 0, errors: 0 });
+  const [scanError, setScanError] = useState<string | null>(null);
+
   const getOAuthUrl = useAction(api.m365.actions.getOAuthUrl);
   const exchangeCode = useAction(api.m365.actions.exchangeCode);
   const listAccounts = useAction(api.m365.actions.listAccounts);
   const removeAccount = useAction(api.m365.actions.removeAccount);
+  const scanSharePointFolder = useAction(api.m365.scan.scanSharePointFolder);
+  const scanMailFolder = useAction(api.m365.scan.scanMailFolder);
+  const importSharePointFile = useAction(api.m365.scan.importSharePointFile);
+  const importMailAttachment = useAction(api.m365.scan.importMailAttachment);
 
   const loadAccounts = async () => {
     try {
@@ -490,8 +516,91 @@ function EmailImportContent() {
 
   const isExpired = (expiresAt: string) => new Date(expiresAt) < new Date();
 
-  const handleStartScan = () => {
-    toast.info("CV Review & Import — coming in the next milestone!");
+  const handleStartScan = async (sources: SelectedSource[]) => {
+    setPhase("scanning");
+    setScanError(null);
+    setFoundFiles([]);
+    setSelectedFileIds(new Set());
+
+    const allFiles: FoundFile[] = [];
+    try {
+      for (const source of sources) {
+        if (source.type === "sharepoint") {
+          const files = await scanSharePointFolder({
+            accountId: source.accountId,
+            siteId: source.siteId!,
+            driveId: source.driveId!,
+            itemId: source.itemId,
+            folderName: source.label,
+          });
+          allFiles.push(...files);
+        } else {
+          const files = await scanMailFolder({
+            accountId: source.accountId,
+            folderId: source.id,
+            folderName: source.label,
+            sharedMailbox: source.sharedMailbox,
+          });
+          allFiles.push(...files);
+        }
+      }
+      setFoundFiles(allFiles);
+      setSelectedFileIds(new Set(allFiles.map(f => f.id)));
+      setPhase("review");
+      if (allFiles.length === 0) toast.info("No CV files found in the selected folders.");
+    } catch (err) {
+      setScanError(err instanceof Error ? err.message : "Scan failed");
+      setPhase("browse");
+    }
+  };
+
+  const handleImport = async () => {
+    const toImport = foundFiles.filter(f => selectedFileIds.has(f.id));
+    if (!scanningAccount || toImport.length === 0) return;
+
+    setPhase("importing");
+    setImportProgress({ done: 0, total: toImport.length, errors: 0 });
+
+    let errors = 0;
+    for (const file of toImport) {
+      try {
+        if (file.source === "sharepoint") {
+          await importSharePointFile({
+            accountId: scanningAccount._id,
+            siteId: file.siteId!,
+            driveId: file.driveId!,
+            itemId: file.itemId!,
+            fileName: file.name,
+          });
+        } else {
+          await importMailAttachment({
+            accountId: scanningAccount._id,
+            messageId: file.messageId!,
+            attachmentId: file.attachmentId!,
+            fileName: file.name,
+          });
+        }
+      } catch {
+        errors++;
+      }
+      setImportProgress(p => ({ ...p, done: p.done + 1, errors }));
+    }
+
+    const imported = toImport.length - errors;
+    if (imported > 0) toast.success(`${imported} CV${imported !== 1 ? "s" : ""} imported successfully!`);
+    if (errors > 0) toast.error(`${errors} file${errors !== 1 ? "s" : ""} failed to import.`);
+
+    // Reset back to account list
+    setPhase("browse");
+    setScanningAccount(null);
+    setSelectedSources([]);
+    setFoundFiles([]);
+  };
+
+  const formatBytes = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   return (
@@ -503,20 +612,124 @@ function EmailImportContent() {
         </p>
       </div>
 
-      {scanningAccount ? (
+      {/* Scanning phase */}
+      {phase === "scanning" && (
+        <Card>
+          <CardContent className="pt-8 pb-8 flex flex-col items-center gap-4">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            <p className="text-sm font-medium">Scanning folders for CV files...</p>
+            <p className="text-xs text-muted-foreground">This may take a moment for large folders.</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Importing phase */}
+      {phase === "importing" && (
+        <Card>
+          <CardContent className="pt-8 pb-8 flex flex-col items-center gap-4">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            <p className="text-sm font-medium">Importing CVs... {importProgress.done} / {importProgress.total}</p>
+            <div className="w-full max-w-xs bg-muted rounded-full h-2">
+              <div
+                className="bg-primary h-2 rounded-full transition-all"
+                style={{ width: `${importProgress.total > 0 ? (importProgress.done / importProgress.total) * 100 : 0}%` }}
+              />
+            </div>
+            {importProgress.errors > 0 && (
+              <p className="text-xs text-destructive">{importProgress.errors} failed</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Review phase */}
+      {phase === "review" && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Found {foundFiles.length} CV {foundFiles.length === 1 ? "file" : "files"}</CardTitle>
+              <div className="flex gap-2">
+                <Button size="sm" variant="secondary" onClick={() => setSelectedFileIds(new Set(foundFiles.map(f => f.id)))}>
+                  Select All
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => setSelectedFileIds(new Set())}>
+                  Deselect All
+                </Button>
+              </div>
+            </div>
+            <CardDescription className="text-xs">
+              {selectedFileIds.size} of {foundFiles.length} selected for import
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {foundFiles.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">No CV files found in the selected folders.</p>
+            ) : (
+              <div className="border rounded-md divide-y max-h-80 overflow-y-auto">
+                {foundFiles.map(file => (
+                  <div key={file.id} className={cn("flex items-start gap-3 px-3 py-2.5 hover:bg-muted/30", selectedFileIds.has(file.id) && "bg-primary/5")}>
+                    <Checkbox
+                      checked={selectedFileIds.has(file.id)}
+                      onCheckedChange={(checked) => {
+                        setSelectedFileIds(prev => {
+                          const next = new Set(prev);
+                          if (checked) next.add(file.id); else next.delete(file.id);
+                          return next;
+                        });
+                      }}
+                      className="mt-0.5 shrink-0"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">{file.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {file.source === "email" ? `Email: ${file.emailSubject ?? ""}` : file.folderPath ?? ""}
+                      </p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <Badge variant="secondary" className="text-xs px-1.5 py-0">
+                        {file.source === "email" ? "Email" : "SharePoint"}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">{formatBytes(file.size)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2 pt-2">
+              <Button variant="secondary" onClick={() => { setPhase("browse"); }} className="flex-1">
+                Back
+              </Button>
+              <Button
+                onClick={handleImport}
+                disabled={selectedFileIds.size === 0}
+                className="flex-1 gap-2"
+              >
+                <ScanSearch className="w-4 h-4" />
+                Import {selectedFileIds.size} CV{selectedFileIds.size !== 1 ? "s" : ""}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Browse phase */}
+      {phase === "browse" && scanningAccount ? (
         <Card>
           <CardContent className="pt-6">
             <ScannerPanel
               account={scanningAccount}
-              onBack={() => { setScanningAccount(null); setSelectedSources([]); }}
+              onBack={() => { setScanningAccount(null); setSelectedSources([]); setScanError(null); }}
               selectedSources={selectedSources}
               onAddSource={(s) => setSelectedSources(prev => [...prev, s])}
               onRemoveSource={(id) => setSelectedSources(prev => prev.filter(s => s.id !== id))}
               onStartScan={handleStartScan}
             />
+            {scanError && (
+              <p className="text-xs text-destructive mt-3">{scanError}</p>
+            )}
           </CardContent>
         </Card>
-      ) : (
+      ) : phase === "browse" && (
         <>
           {!isLoadingAccounts && accounts.length === 0 && (
             <Card className="border-dashed">
@@ -569,7 +782,7 @@ function EmailImportContent() {
                       ) : (
                         <Badge variant="secondary" className="gap-1 text-xs"><CheckCircle className="w-3 h-3 text-green-500" />Connected</Badge>
                       )}
-                      <Button size="sm" variant="secondary" onClick={() => { setScanningAccount(account); setSelectedSources([]); }} className="gap-1.5 text-xs">
+                      <Button size="sm" variant="secondary" onClick={() => { setScanningAccount(account); setSelectedSources([]); setPhase("browse"); }} className="gap-1.5 text-xs">
                         <ScanSearch className="w-3.5 h-3.5" /> Browse
                       </Button>
                       <Button size="sm" variant="ghost" onClick={() => handleRemove(account._id)} disabled={removingId === account._id} className="text-muted-foreground hover:text-destructive">
