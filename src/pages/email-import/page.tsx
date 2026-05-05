@@ -391,7 +391,7 @@ function ScannerPanel({ account, onBack, selectedSources, onAddSource, onRemoveS
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 function EmailImportContent() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(true);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -418,31 +418,60 @@ function EmailImportContent() {
   useEffect(() => { loadAccounts(); }, []);
 
   useEffect(() => {
-    const code = searchParams.get("code");
-    const state = searchParams.get("state");
     const error = searchParams.get("error");
-
-    if (code && state) {
-      setIsConnecting(true);
-      setSearchParams({}, { replace: true });
-      exchangeCode({ code, state })
-        .then((result) => {
-          if (result.ok) { toast.success(`Connected: ${result.email}`); loadAccounts(); }
-          else toast.error(`Connection failed: ${result.error}`);
-        })
-        .catch(() => toast.error("Failed to complete connection"))
-        .finally(() => setIsConnecting(false));
-    } else if (error) {
-      toast.error(`Connection failed: ${decodeURIComponent(error)}`);
-      setSearchParams({}, { replace: true });
-    }
-  }, [searchParams]);
+    if (error) toast.error(`Connection failed: ${decodeURIComponent(error)}`);
+  }, []);
 
   const handleConnect = async () => {
     setIsConnecting(true);
     try {
       const url = await getOAuthUrl({});
-      window.location.href = url;
+
+      // Open in popup so main window session is preserved
+      const popup = window.open(url, "ms_oauth", "width=520,height=640,toolbar=0,menubar=0,location=0");
+      if (!popup) {
+        toast.error("Popup blocked. Please allow popups for this site and try again.");
+        setIsConnecting(false);
+        return;
+      }
+
+      const onMessage = async (event: MessageEvent) => {
+        if (event.data?.type !== "ms_oauth_callback") return;
+        window.removeEventListener("message", onMessage);
+
+        const { code, state, error } = event.data.payload as { code?: string; state?: string; error?: string };
+        if (error) {
+          toast.error(`Connection failed: ${error}`);
+          setIsConnecting(false);
+          return;
+        }
+        if (!code || !state) {
+          toast.error("Connection failed: missing parameters");
+          setIsConnecting(false);
+          return;
+        }
+        try {
+          const result = await exchangeCode({ code, state });
+          if (result.ok) { toast.success(`Connected: ${result.email}`); loadAccounts(); }
+          else toast.error(`Connection failed: ${result.error}`);
+        } catch {
+          toast.error("Failed to complete connection");
+        } finally {
+          setIsConnecting(false);
+        }
+      };
+
+      window.addEventListener("message", onMessage);
+
+      // Fallback: if popup is closed without message
+      const pollClosed = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(pollClosed);
+          window.removeEventListener("message", onMessage);
+          setIsConnecting(false);
+        }
+      }, 500);
+
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to start connection");
       setIsConnecting(false);

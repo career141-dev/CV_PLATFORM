@@ -18,20 +18,26 @@ http.route({
 
     const appOrigin = process.env.APP_ORIGIN ?? "http://localhost:5173";
 
-    if (error) {
-      const msg = encodeURIComponent(errorDescription ?? error);
-      return Response.redirect(`${appOrigin}/email-import?error=${msg}`, 302);
-    }
+    // Return an HTML page that posts the result back to the opener window (popup flow)
+    const payload = error
+      ? JSON.stringify({ error: errorDescription ?? error })
+      : (!code || !state)
+        ? JSON.stringify({ error: "missing_params" })
+        : JSON.stringify({ code, state });
 
-    if (!code || !state) {
-      return Response.redirect(`${appOrigin}/email-import?error=missing_params`, 302);
-    }
+    const html = `<!DOCTYPE html><html><body><script>
+      try {
+        if (window.opener) {
+          window.opener.postMessage({ type: "ms_oauth_callback", payload: ${payload} }, "${appOrigin}");
+        }
+      } catch(e) {}
+      window.close();
+    </script><p>Connecting... you can close this window.</p></body></html>`;
 
-    // Pass code + state to frontend — frontend will call exchangeCode action
-    return Response.redirect(
-      `${appOrigin}/email-import?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`,
-      302
-    );
+    return new Response(html, {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    });
   }),
 });
 
