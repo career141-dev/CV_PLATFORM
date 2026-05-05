@@ -418,7 +418,7 @@ function EmailImportContent() {
   const [phase, setPhase] = useState<"browse" | "scanning" | "summary" | "sample" | "review" | "importing">("browse");
   const [foundFiles, setFoundFiles] = useState<FoundFile[]>([]);
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
-  const [importProgress, setImportProgress] = useState<{ done: number; total: number; errors: number; skipped: number }>({ done: 0, total: 0, errors: 0, skipped: 0 });
+  const [importProgress, setImportProgress] = useState<{ done: number; total: number; errors: number; skipped: number; notCv: number }>({ done: 0, total: 0, errors: 0, skipped: 0, notCv: 0 });
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanStats, setScanStats] = useState<{ folders: number; totalFiles: number; totalSize: number } | null>(null);
   const [sampleFiles, setSampleFiles] = useState<FoundFile[]>([]);
@@ -573,13 +573,14 @@ function EmailImportContent() {
     if (!scanningAccount || toImport.length === 0) return;
 
     setPhase("importing");
-    setImportProgress({ done: 0, total: toImport.length, errors: 0, skipped: 0 });
+    setImportProgress({ done: 0, total: toImport.length, errors: 0, skipped: 0, notCv: 0 });
 
     let errors = 0;
     let skipped = 0;
+    let notCv = 0;
     for (const file of toImport) {
       try {
-        let result: { cvId: string; skipped: boolean };
+        let result: { cvId: string | null; skipped: boolean; notACv?: boolean };
         if (file.source === "sharepoint") {
           result = await importSharePointFile({
             accountId: scanningAccount._id,
@@ -596,16 +597,20 @@ function EmailImportContent() {
             fileName: file.name,
           });
         }
-        if (result.skipped) skipped++;
+        if (result.skipped) {
+          if (result.notACv) notCv++;
+          else skipped++;
+        }
       } catch {
         errors++;
       }
-      setImportProgress(p => ({ ...p, done: p.done + 1, errors, skipped }));
+      setImportProgress(p => ({ ...p, done: p.done + 1, errors, skipped, notCv }));
     }
 
-    const imported = toImport.length - errors - skipped;
+    const imported = toImport.length - errors - skipped - notCv;
     if (imported > 0) toast.success(`${imported} CV${imported !== 1 ? "s" : ""} imported successfully!`);
     if (skipped > 0) toast.info(`${skipped} file${skipped !== 1 ? "s" : ""} already imported — skipped.`);
+    if (notCv > 0) toast.info(`${notCv} file${notCv !== 1 ? "s" : ""} did not appear to be a CV — skipped.`);
     if (errors > 0) toast.error(`${errors} file${errors !== 1 ? "s" : ""} failed to import.`);
 
     // Reset back to account list
@@ -735,6 +740,7 @@ function EmailImportContent() {
             <div className="flex gap-4 text-xs text-muted-foreground">
               {importProgress.errors > 0 && <span className="text-destructive">{importProgress.errors} failed</span>}
               {importProgress.skipped > 0 && <span>{importProgress.skipped} already imported (skipped)</span>}
+              {importProgress.notCv > 0 && <span>{importProgress.notCv} not a CV (skipped)</span>}
             </div>
           </CardContent>
         </Card>
