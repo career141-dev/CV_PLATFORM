@@ -276,6 +276,50 @@ export const importSharePointFile = action({
   },
 });
 
+// ─── Text extraction (mirrors cvProcessing.ts helpers) ───────────────────────
+
+async function extractTextFromBuffer(buffer: ArrayBuffer, fileType: string): Promise<string> {
+  if (fileType === "pdf") {
+    const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
+    const pdf = await loadingTask.promise;
+    const parts: string[] = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      parts.push(content.items.map((item) => ("str" in item ? item.str : "")).join(" "));
+    }
+    return parts.join("\n");
+  } else if (fileType === "docx" || fileType === "doc") {
+    const mammoth = await import("mammoth");
+    const result = await mammoth.extractRawText({ buffer: Buffer.from(buffer) });
+    return result.value;
+  }
+  return new TextDecoder().decode(buffer);
+}
+
+// ─── CV keyword detection ─────────────────────────────────────────────────────
+
+const CV_KEYWORDS = [
+  "curriculum vitae", "resume", "cv", "work experience", "professional experience",
+  "employment history", "education", "qualifications", "skills", "objective",
+  "summary", "profile", "references", "bachelor", "master", "degree", "university",
+  "college", "position", "job title", "employer", "internship", "volunteer",
+];
+
+function looksLikeCv(text: string): boolean {
+  const lower = text.toLowerCase();
+  // Require at least 3 distinct CV-related keywords to reduce false positives
+  let hits = 0;
+  for (const kw of CV_KEYWORDS) {
+    if (lower.includes(kw)) {
+      hits++;
+      if (hits >= 3) return true;
+    }
+  }
+  return false;
+}
+
 // ─── Import an email attachment as CV ────────────────────────────────────────
 
 export const importMailAttachment = action({
@@ -286,7 +330,7 @@ export const importMailAttachment = action({
     fileName: v.string(),
     sharedMailbox: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{ cvId: Id<"cvs">; skipped: boolean }> => {
+  handler: async (ctx, args): Promise<{ cvId: Id<"cvs"> | null; skipped: boolean; notACv?: boolean }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
 
@@ -302,6 +346,25 @@ export const importMailAttachment = action({
     );
     if (!res.ok) throw new Error(`Failed to download attachment: ${res.status}`);
     const buffer = await res.arrayBuffer();
+
+    // ── CV keyword check: extract text and verify it looks like a CV ──────────
+    const lower = args.fileName.toLowerCase();
+    const fileType = lower.endsWith(".pdf") ? "pdf"
+      : lower.endsWith(".docx") ? "docx"
+      : lower.endsWith(".doc") ? "doc"
+      : "pdf";
+
+    let rawText = "";
+    try {
+      rawText = await extractTextFromBuffer(buffer, fileType);
+    } catch {
+      // If we can't extract text we can't verify — skip to be safe
+      return { cvId: null, skipped: true, notACv: true };
+    }
+
+    if (!looksLikeCv(rawText)) {
+      return { cvId: null, skipped: true, notACv: true };
+    }
 
     return ctx.runAction(internal.m365.scan.storeAndProcess, {
       buffer: new Uint8Array(buffer).buffer,
@@ -356,8 +419,8 @@ export const storeAndProcess = internalAction({
       fileHash,
     });
 
-    // Process the CV (extract text + AI structure)
-    await ctx.runAction(api.cvProcessing.processCv, {
+    // Extract text only (lazy — no AI cost)
+    await ctx.runAction(api.cvProcessing.extractTextOnly, {
       cvId,
       storageId,
       fileType,
