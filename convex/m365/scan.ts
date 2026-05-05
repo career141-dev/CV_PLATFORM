@@ -22,6 +22,7 @@ export type FoundFile = {
   attachmentId?: string;
   folderPath?: string;
   emailSubject?: string;
+  sharedMailbox?: string;
   // Body link fields (CV linked in email body, not attached)
   bodyLinkUrl?: string;
 };
@@ -171,7 +172,8 @@ async function scanMailFolderRecursive(
   folderId: string,
   folderName: string,
   results: FoundFile[],
-  depth: number
+  depth: number,
+  sharedMailbox?: string // carry through for import routing
 ): Promise<void> {
   if (depth > 6) return;
 
@@ -212,6 +214,7 @@ async function scanMailFolderRecursive(
                 attachmentId: att.id,
                 folderPath: folderName,
                 emailSubject: msg.subject ?? "(no subject)",
+                sharedMailbox,
               });
             }
           }
@@ -233,6 +236,7 @@ async function scanMailFolderRecursive(
             folderPath: folderName,
             emailSubject: msg.subject ?? "(no subject)",
             bodyLinkUrl: link.url,
+            sharedMailbox,
           });
         }
       }
@@ -249,7 +253,7 @@ async function scanMailFolderRecursive(
     for (const child of childData.value ?? []) {
       await scanMailFolderRecursive(
         token, mailboxBase, child.id,
-        `${folderName}/${child.displayName}`, results, depth + 1
+        `${folderName}/${child.displayName}`, results, depth + 1, sharedMailbox
       );
     }
   } catch {
@@ -299,7 +303,7 @@ export const scanMailFolder = action({
       ? `/users/${encodeURIComponent(args.sharedMailbox)}`
       : "/me";
     const results: FoundFile[] = [];
-    await scanMailFolderRecursive(token, mailboxBase, args.folderId, args.folderName, results, 0);
+    await scanMailFolderRecursive(token, mailboxBase, args.folderId, args.folderName, results, 0, args.sharedMailbox);
     return results;
   },
 });

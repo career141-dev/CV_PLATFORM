@@ -174,6 +174,7 @@ type FoundFile = {
   attachmentId?: string;
   folderPath?: string;
   emailSubject?: string;
+  sharedMailbox?: string;
   bodyLinkUrl?: string;
 };
 
@@ -618,6 +619,7 @@ function EmailImportContent() {
               messageId: file.messageId!,
               attachmentId: file.attachmentId!,
               fileName: file.name,
+              sharedMailbox: file.sharedMailbox,
             });
           }
         })
