@@ -256,7 +256,7 @@ export const importSharePointFile = action({
     itemId: v.string(),
     fileName: v.string(),
   },
-  handler: async (ctx, args): Promise<{ cvId: Id<"cvs"> }> => {
+  handler: async (ctx, args): Promise<{ cvId: Id<"cvs">; skipped: boolean }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
 
@@ -286,7 +286,7 @@ export const importMailAttachment = action({
     fileName: v.string(),
     sharedMailbox: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{ cvId: Id<"cvs"> }> => {
+  handler: async (ctx, args): Promise<{ cvId: Id<"cvs">; skipped: boolean }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
 
@@ -319,7 +319,18 @@ export const storeAndProcess = internalAction({
     fileName: v.string(),
     tokenIdentifier: v.string(),
   },
-  handler: async (ctx, args): Promise<{ cvId: Id<"cvs"> }> => {
+  handler: async (ctx, args): Promise<{ cvId: Id<"cvs">; skipped: boolean }> => {
+    // Compute SHA-256 hash for deduplication
+    const hashBuffer = await crypto.subtle.digest("SHA-256", args.buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const fileHash = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+
+    // Check if this file was already imported
+    const existingId = await ctx.runMutation(internal.m365.scanMutations.findByFileHash, { fileHash });
+    if (existingId) {
+      return { cvId: existingId, skipped: true };
+    }
+
     const lower = args.fileName.toLowerCase();
     const fileType = lower.endsWith(".pdf") ? "pdf"
       : lower.endsWith(".docx") ? "docx"
@@ -335,13 +346,14 @@ export const storeAndProcess = internalAction({
     });
     const storageId = await ctx.storage.store(blob);
 
-    // Create CV record
+    // Create CV record with hash
     const cvId = await ctx.runMutation(internal.m365.scanMutations.createCvRecord, {
       storageId,
       fileName: args.fileName,
       fileType,
       fileSize: args.buffer.byteLength,
       tokenIdentifier: args.tokenIdentifier,
+      fileHash,
     });
 
     // Process the CV (extract text + AI structure)
@@ -351,6 +363,6 @@ export const storeAndProcess = internalAction({
       fileType,
     });
 
-    return { cvId };
+    return { cvId, skipped: false };
   },
 });

@@ -11,6 +11,7 @@ export const createCvRecord = internalMutation({
     fileType: v.string(),
     fileSize: v.number(),
     tokenIdentifier: v.string(),
+    fileHash: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Id<"cvs">> => {
     const user = await ctx.db
@@ -34,6 +35,18 @@ export const createCvRecord = internalMutation({
       fileSize: args.fileSize,
       status: "uploading",
       uploadedBy: user._id,
+      fileHash: args.fileHash,
     });
+  },
+});
+
+export const findByFileHash = internalMutation({
+  args: { fileHash: v.string() },
+  handler: async (ctx, args): Promise<Id<"cvs"> | null> => {
+    const existing = await ctx.db
+      .query("cvs")
+      .withIndex("by_file_hash", (q) => q.eq("fileHash", args.fileHash))
+      .first();
+    return existing?._id ?? null;
   },
 });

@@ -48,11 +48,15 @@ export default defineSchema({
 
     // Workable integration — used for deduplication
     workableCandidateId: v.optional(v.string()),
+
+    // File hash — SHA-256 hex string for deduplication across imports
+    fileHash: v.optional(v.string()),
   })
     .index("by_status", ["status"])
     .index("by_uploaded_by", ["uploadedBy"])
     .index("by_industry", ["industry"])
     .index("by_seniority", ["seniority"])
+    .index("by_file_hash", ["fileHash"])
     .searchIndex("search_text", {
       searchField: "rawText",
       filterFields: ["status", "industry", "seniority"],

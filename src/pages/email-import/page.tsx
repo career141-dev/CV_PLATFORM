@@ -415,11 +415,13 @@ function EmailImportContent() {
   const [selectedSources, setSelectedSources] = useState<SelectedSource[]>([]);
 
   // Scan & review state
-  const [phase, setPhase] = useState<"browse" | "scanning" | "review" | "importing">("browse");
+  const [phase, setPhase] = useState<"browse" | "scanning" | "summary" | "sample" | "review" | "importing">("browse");
   const [foundFiles, setFoundFiles] = useState<FoundFile[]>([]);
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
-  const [importProgress, setImportProgress] = useState<{ done: number; total: number; errors: number }>({ done: 0, total: 0, errors: 0 });
+  const [importProgress, setImportProgress] = useState<{ done: number; total: number; errors: number; skipped: number }>({ done: 0, total: 0, errors: 0, skipped: 0 });
   const [scanError, setScanError] = useState<string | null>(null);
+  const [scanStats, setScanStats] = useState<{ folders: number; totalFiles: number; totalSize: number } | null>(null);
+  const [sampleFiles, setSampleFiles] = useState<FoundFile[]>([]);
 
   const getOAuthUrl = useAction(api.m365.actions.getOAuthUrl);
   const exchangeCode = useAction(api.m365.actions.exchangeCode);
@@ -521,6 +523,7 @@ function EmailImportContent() {
     setScanError(null);
     setFoundFiles([]);
     setSelectedFileIds(new Set());
+    setScanStats(null);
 
     const allFiles: FoundFile[] = [];
     try {
@@ -546,8 +549,19 @@ function EmailImportContent() {
       }
       setFoundFiles(allFiles);
       setSelectedFileIds(new Set(allFiles.map(f => f.id)));
-      setPhase("review");
-      if (allFiles.length === 0) toast.info("No CV files found in the selected folders.");
+
+      const totalSize = allFiles.reduce((sum, f) => sum + f.size, 0);
+      setScanStats({ folders: sources.length, totalFiles: allFiles.length, totalSize });
+
+      if (allFiles.length === 0) {
+        toast.info("No CV files found in the selected folders.");
+        setPhase("browse");
+      } else {
+        // Pick up to 10 random files as the sample
+        const shuffled = [...allFiles].sort(() => Math.random() - 0.5);
+        setSampleFiles(shuffled.slice(0, 10));
+        setPhase("summary");
+      }
     } catch (err) {
       setScanError(err instanceof Error ? err.message : "Scan failed");
       setPhase("browse");
@@ -559,13 +573,15 @@ function EmailImportContent() {
     if (!scanningAccount || toImport.length === 0) return;
 
     setPhase("importing");
-    setImportProgress({ done: 0, total: toImport.length, errors: 0 });
+    setImportProgress({ done: 0, total: toImport.length, errors: 0, skipped: 0 });
 
     let errors = 0;
+    let skipped = 0;
     for (const file of toImport) {
       try {
+        let result: { cvId: string; skipped: boolean };
         if (file.source === "sharepoint") {
-          await importSharePointFile({
+          result = await importSharePointFile({
             accountId: scanningAccount._id,
             siteId: file.siteId!,
             driveId: file.driveId!,
@@ -573,21 +589,23 @@ function EmailImportContent() {
             fileName: file.name,
           });
         } else {
-          await importMailAttachment({
+          result = await importMailAttachment({
             accountId: scanningAccount._id,
             messageId: file.messageId!,
             attachmentId: file.attachmentId!,
             fileName: file.name,
           });
         }
+        if (result.skipped) skipped++;
       } catch {
         errors++;
       }
-      setImportProgress(p => ({ ...p, done: p.done + 1, errors }));
+      setImportProgress(p => ({ ...p, done: p.done + 1, errors, skipped }));
     }
 
-    const imported = toImport.length - errors;
+    const imported = toImport.length - errors - skipped;
     if (imported > 0) toast.success(`${imported} CV${imported !== 1 ? "s" : ""} imported successfully!`);
+    if (skipped > 0) toast.info(`${skipped} file${skipped !== 1 ? "s" : ""} already imported — skipped.`);
     if (errors > 0) toast.error(`${errors} file${errors !== 1 ? "s" : ""} failed to import.`);
 
     // Reset back to account list
@@ -623,6 +641,85 @@ function EmailImportContent() {
         </Card>
       )}
 
+      {/* Summary phase */}
+      {phase === "summary" && scanStats && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Scan Complete</CardTitle>
+            <CardDescription className="text-xs">Here&apos;s what was found across {scanStats.folders} folder{scanStats.folders !== 1 ? "s" : ""}.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-muted/50 rounded-lg p-3 text-center">
+                <p className="text-2xl font-bold text-foreground">{scanStats.totalFiles}</p>
+                <p className="text-xs text-muted-foreground mt-1">CV files found</p>
+              </div>
+              <div className="bg-muted/50 rounded-lg p-3 text-center">
+                <p className="text-2xl font-bold text-foreground">{scanStats.folders}</p>
+                <p className="text-xs text-muted-foreground mt-1">Folders scanned</p>
+              </div>
+              <div className="bg-muted/50 rounded-lg p-3 text-center">
+                <p className="text-2xl font-bold text-foreground">{formatBytes(scanStats.totalSize)}</p>
+                <p className="text-xs text-muted-foreground mt-1">Total size</p>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Before importing all {scanStats.totalFiles} files, review a random sample of {sampleFiles.length} to confirm they look like CVs.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="secondary" className="flex-1" onClick={() => { setPhase("browse"); }}>Back</Button>
+              <Button className="flex-1 gap-2" onClick={() => setPhase("sample")}>
+                <ScanSearch className="w-4 h-4" /> Review Sample
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Sample review phase */}
+      {phase === "sample" && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Sample Review</CardTitle>
+            <CardDescription className="text-xs">
+              These {sampleFiles.length} files were randomly selected. Do they look like CVs?
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="border rounded-md divide-y max-h-72 overflow-y-auto">
+              {sampleFiles.map(file => (
+                <div key={file.id} className="flex items-center gap-3 px-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">{file.name}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {file.source === "email" ? `Email: ${file.emailSubject ?? ""}` : file.folderPath ?? ""}
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <Badge variant="secondary" className="text-xs px-1.5 py-0">
+                      {file.source === "email" ? "Email" : "SharePoint"}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">{formatBytes(file.size)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              If these look correct, proceed to import all {foundFiles.length} files.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="secondary" className="flex-1" onClick={() => setPhase("summary")}>Back</Button>
+              <Button variant="secondary" className="flex-1" onClick={() => setPhase("review")}>
+                Review All Files
+              </Button>
+              <Button className="flex-1 gap-2" onClick={handleImport}>
+                <CheckCircle className="w-4 h-4" /> Yes, Import All
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Importing phase */}
       {phase === "importing" && (
         <Card>
@@ -635,9 +732,10 @@ function EmailImportContent() {
                 style={{ width: `${importProgress.total > 0 ? (importProgress.done / importProgress.total) * 100 : 0}%` }}
               />
             </div>
-            {importProgress.errors > 0 && (
-              <p className="text-xs text-destructive">{importProgress.errors} failed</p>
-            )}
+            <div className="flex gap-4 text-xs text-muted-foreground">
+              {importProgress.errors > 0 && <span className="text-destructive">{importProgress.errors} failed</span>}
+              {importProgress.skipped > 0 && <span>{importProgress.skipped} already imported (skipped)</span>}
+            </div>
           </CardContent>
         </Card>
       )}
