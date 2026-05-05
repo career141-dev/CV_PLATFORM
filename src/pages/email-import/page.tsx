@@ -4,22 +4,391 @@ import { api } from "@/convex/_generated/api.js";
 import { Authenticated, Unauthenticated, AuthLoading } from "convex/react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Mail, Plus, Trash2, CheckCircle, AlertCircle, Loader2, ExternalLink } from "lucide-react";
+import {
+  Mail, Plus, Trash2, CheckCircle, AlertCircle, Loader2, ExternalLink,
+  FolderOpen, Folder, ChevronRight, ChevronDown, Globe, Database,
+  ArrowLeft, ScanSearch, X
+} from "lucide-react";
 import { Button } from "@/components/ui/button.tsx";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs.tsx";
+import { Input } from "@/components/ui/input.tsx";
 import { SignInButton } from "@/components/ui/signin.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty.tsx";
+import { Checkbox } from "@/components/ui/checkbox.tsx";
 import AppLayout from "@/components/app-layout.tsx";
+import { cn } from "@/lib/utils.ts";
 import type { Id } from "@/convex/_generated/dataModel.d.ts";
 
-type Account = {
-  _id: Id<"m365Accounts">;
-  email: string;
-  displayName?: string;
-  expiresAt: string;
+type Account = { _id: Id<"m365Accounts">; email: string; displayName?: string; expiresAt: string };
+type MailFolder = { id: string; displayName: string; childFolderCount: number; totalItemCount: number };
+type SpSite = { id: string; displayName: string; name: string; webUrl: string };
+type SpDrive = { id: string; name: string; driveType: string };
+type DriveItem = { id: string; name: string; folder?: { childCount: number }; file?: { mimeType: string }; size?: number };
+
+// ─── Folder tree node ────────────────────────────────────────────────────────
+
+type MailFolderNodeProps = {
+  folder: MailFolder;
+  accountId: Id<"m365Accounts">;
+  sharedMailbox?: string;
+  selectedIds: Set<string>;
+  onToggle: (id: string, displayName: string) => void;
+  listMailFolders: (args: { accountId: Id<"m365Accounts">; sharedMailbox?: string; parentFolderId?: string }) => Promise<MailFolder[]>;
 };
+
+function MailFolderNode({ folder, accountId, sharedMailbox, selectedIds, onToggle, listMailFolders }: MailFolderNodeProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [children, setChildren] = useState<MailFolder[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const expand = async () => {
+    if (!expanded && folder.childFolderCount > 0 && children.length === 0) {
+      setLoading(true);
+      try {
+        const result = await listMailFolders({ accountId, sharedMailbox, parentFolderId: folder.id });
+        setChildren(result);
+      } catch { toast.error("Failed to load subfolders"); }
+      finally { setLoading(false); }
+    }
+    setExpanded(!expanded);
+  };
+
+  return (
+    <div>
+      <div className={cn("flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-muted/50 cursor-pointer group", selectedIds.has(folder.id) && "bg-primary/5")}>
+        <Checkbox
+          checked={selectedIds.has(folder.id)}
+          onCheckedChange={() => onToggle(folder.id, folder.displayName)}
+          onClick={(e) => e.stopPropagation()}
+        />
+        <div className="flex items-center gap-1.5 flex-1 min-w-0" onClick={expand}>
+          {folder.childFolderCount > 0 ? (
+            loading ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-muted-foreground" /> :
+            expanded ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> :
+            <ChevronRight className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+          ) : <span className="w-3.5 shrink-0" />}
+          {expanded ? <FolderOpen className="w-3.5 h-3.5 text-blue-400 shrink-0" /> : <Folder className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
+          <span className="text-sm truncate">{folder.displayName}</span>
+          <span className="text-xs text-muted-foreground shrink-0 ml-auto">{folder.totalItemCount}</span>
+        </div>
+      </div>
+      {expanded && children.length > 0 && (
+        <div className="ml-5 border-l border-border/50 pl-2 mt-0.5">
+          {children.map((child) => (
+            <MailFolderNode key={child.id} folder={child} accountId={accountId} sharedMailbox={sharedMailbox} selectedIds={selectedIds} onToggle={onToggle} listMailFolders={listMailFolders} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SharePoint folder tree node ──────────────────────────────────────────────
+
+type SpFolderNodeProps = {
+  item: DriveItem;
+  accountId: Id<"m365Accounts">;
+  siteId: string;
+  driveId: string;
+  selectedIds: Set<string>;
+  onToggle: (id: string, name: string) => void;
+  listFolder: (args: { accountId: Id<"m365Accounts">; siteId: string; driveId: string; itemId?: string }) => Promise<DriveItem[]>;
+};
+
+function SpFolderNode({ item, accountId, siteId, driveId, selectedIds, onToggle, listFolder }: SpFolderNodeProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [children, setChildren] = useState<DriveItem[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  if (!item.folder) return null; // only show folders
+
+  const expand = async () => {
+    if (!expanded && (item.folder?.childCount ?? 0) > 0 && children.length === 0) {
+      setLoading(true);
+      try {
+        const result = await listFolder({ accountId, siteId, driveId, itemId: item.id });
+        setChildren(result.filter(i => i.folder));
+      } catch { toast.error("Failed to load subfolders"); }
+      finally { setLoading(false); }
+    }
+    setExpanded(!expanded);
+  };
+
+  return (
+    <div>
+      <div className={cn("flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-muted/50 cursor-pointer", selectedIds.has(item.id) && "bg-primary/5")}>
+        <Checkbox
+          checked={selectedIds.has(item.id)}
+          onCheckedChange={() => onToggle(item.id, item.name)}
+          onClick={(e) => e.stopPropagation()}
+        />
+        <div className="flex items-center gap-1.5 flex-1 min-w-0" onClick={expand}>
+          {(item.folder.childCount ?? 0) > 0 ? (
+            loading ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-muted-foreground" /> :
+            expanded ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-muted-foreground" /> :
+            <ChevronRight className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+          ) : <span className="w-3.5 shrink-0" />}
+          {expanded ? <FolderOpen className="w-3.5 h-3.5 text-blue-400 shrink-0" /> : <Folder className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
+          <span className="text-sm truncate">{item.name}</span>
+          {item.folder.childCount > 0 && <span className="text-xs text-muted-foreground shrink-0 ml-auto">{item.folder.childCount} items</span>}
+        </div>
+      </div>
+      {expanded && children.length > 0 && (
+        <div className="ml-5 border-l border-border/50 pl-2 mt-0.5">
+          {children.map((child) => (
+            <SpFolderNode key={child.id} item={child} accountId={accountId} siteId={siteId} driveId={driveId} selectedIds={selectedIds} onToggle={onToggle} listFolder={listFolder} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Scanner panel ────────────────────────────────────────────────────────────
+
+type SelectedSource = {
+  type: "mail" | "sharepoint";
+  id: string;
+  label: string;
+  accountId: Id<"m365Accounts">;
+  // For sharepoint
+  siteId?: string;
+  driveId?: string;
+  // For mail
+  sharedMailbox?: string;
+};
+
+type ScannerPanelProps = {
+  account: Account;
+  onBack: () => void;
+  selectedSources: SelectedSource[];
+  onAddSource: (source: SelectedSource) => void;
+  onRemoveSource: (id: string) => void;
+  onStartScan: () => void;
+};
+
+function ScannerPanel({ account, onBack, selectedSources, onAddSource, onRemoveSource, onStartScan }: ScannerPanelProps) {
+  const [tab, setTab] = useState<"mail" | "sharepoint">("mail");
+  const [mailFolders, setMailFolders] = useState<MailFolder[]>([]);
+  const [loadingMail, setLoadingMail] = useState(false);
+  const [sharedMailbox, setSharedMailbox] = useState("");
+  const [spSites, setSpSites] = useState<SpSite[]>([]);
+  const [spDrives, setSpDrives] = useState<SpDrive[]>([]);
+  const [spItems, setSpItems] = useState<DriveItem[]>([]);
+  const [selectedSite, setSelectedSite] = useState<SpSite | null>(null);
+  const [selectedDrive, setSelectedDrive] = useState<SpDrive | null>(null);
+  const [loadingSp, setLoadingSp] = useState(false);
+
+  const listMailFolders = useAction(api.m365.actions.listMailFolders);
+  const listSpSites = useAction(api.m365.actions.listSharePointSites);
+  const listSpDrives = useAction(api.m365.actions.listSharePointDrives);
+  const listSpFolder = useAction(api.m365.actions.listSharePointFolder);
+
+  const selectedMailIds = new Set(selectedSources.filter(s => s.type === "mail").map(s => s.id));
+  const selectedSpIds = new Set(selectedSources.filter(s => s.type === "sharepoint").map(s => s.id));
+
+  const loadMailFolders = async (mbx?: string) => {
+    setLoadingMail(true);
+    try {
+      const result = await listMailFolders({ accountId: account._id, sharedMailbox: mbx || undefined });
+      setMailFolders(result);
+    } catch { toast.error("Failed to load mail folders"); }
+    finally { setLoadingMail(false); }
+  };
+
+  const loadSpSites = async () => {
+    setLoadingSp(true);
+    try {
+      const result = await listSpSites({ accountId: account._id });
+      setSpSites(result);
+    } catch { toast.error("Failed to load SharePoint sites"); }
+    finally { setLoadingSp(false); }
+  };
+
+  useEffect(() => {
+    if (tab === "mail" && mailFolders.length === 0) loadMailFolders();
+    if (tab === "sharepoint" && spSites.length === 0) loadSpSites();
+  }, [tab]);
+
+  const toggleMailFolder = (id: string, name: string) => {
+    if (selectedMailIds.has(id)) {
+      onRemoveSource(id);
+    } else {
+      onAddSource({ type: "mail", id, label: name, accountId: account._id, sharedMailbox: sharedMailbox || undefined });
+    }
+  };
+
+  const toggleSpFolder = (id: string, name: string) => {
+    if (!selectedSite || !selectedDrive) return;
+    if (selectedSpIds.has(id)) {
+      onRemoveSource(id);
+    } else {
+      onAddSource({ type: "sharepoint", id, label: `${selectedSite.displayName} / ${selectedDrive.name} / ${name}`, accountId: account._id, siteId: selectedSite.id, driveId: selectedDrive.id });
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" size="sm" onClick={onBack} className="gap-1.5 text-muted-foreground">
+          <ArrowLeft className="w-3.5 h-3.5" /> Back
+        </Button>
+        <div>
+          <p className="text-sm font-medium">{account.displayName ?? account.email}</p>
+          <p className="text-xs text-muted-foreground">{account.email}</p>
+        </div>
+      </div>
+
+      <Tabs value={tab} onValueChange={(v) => setTab(v as "mail" | "sharepoint")}>
+        <TabsList className="w-full">
+          <TabsTrigger value="mail" className="flex-1 gap-1.5"><Mail className="w-3.5 h-3.5" /> Mailbox</TabsTrigger>
+          <TabsTrigger value="sharepoint" className="flex-1 gap-1.5"><Globe className="w-3.5 h-3.5" /> SharePoint</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="mail" className="space-y-3 mt-3">
+          <div className="flex gap-2">
+            <Input
+              placeholder="Shared mailbox email (optional)"
+              value={sharedMailbox}
+              onChange={(e) => setSharedMailbox(e.target.value)}
+              className="text-sm h-8"
+            />
+            <Button size="sm" variant="secondary" onClick={() => loadMailFolders(sharedMailbox)} disabled={loadingMail}>
+              {loadingMail ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Load"}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">Leave blank for your own inbox, or enter a shared mailbox email.</p>
+          {loadingMail ? (
+            <div className="space-y-1">{[1,2,3].map(i => <Skeleton key={i} className="h-8 w-full" />)}</div>
+          ) : mailFolders.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">No folders found</p>
+          ) : (
+            <div className="border rounded-md p-2 max-h-64 overflow-y-auto space-y-0.5">
+              {mailFolders.map(f => (
+                <MailFolderNode key={f.id} folder={f} accountId={account._id} sharedMailbox={sharedMailbox || undefined} selectedIds={selectedMailIds} onToggle={toggleMailFolder} listMailFolders={listMailFolders} />
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="sharepoint" className="space-y-3 mt-3">
+          {!selectedSite ? (
+            <>
+              <p className="text-xs text-muted-foreground">Select a SharePoint site:</p>
+              {loadingSp ? (
+                <div className="space-y-1">{[1,2,3].map(i => <Skeleton key={i} className="h-10 w-full" />)}</div>
+              ) : spSites.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No SharePoint sites found</p>
+              ) : (
+                <div className="border rounded-md divide-y max-h-64 overflow-y-auto">
+                  {spSites.map(site => (
+                    <button key={site.id} onClick={async () => {
+                      setSelectedSite(site);
+                      setLoadingSp(true);
+                      try {
+                        const drives = await listSpDrives({ accountId: account._id, siteId: site.id });
+                        setSpDrives(drives);
+                        if (drives.length === 1) {
+                          setSelectedDrive(drives[0]);
+                          const items = await listSpFolder({ accountId: account._id, siteId: site.id, driveId: drives[0].id });
+                          setSpItems(items.filter(i => i.folder));
+                        }
+                      } catch { toast.error("Failed to load site"); }
+                      finally { setLoadingSp(false); }
+                    }} className="flex items-center gap-2 px-3 py-2.5 w-full text-left hover:bg-muted/50 transition-colors">
+                      <Globe className="w-4 h-4 text-blue-400 shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{site.displayName}</p>
+                        <p className="text-xs text-muted-foreground truncate">{site.webUrl}</p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 ml-auto" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : !selectedDrive ? (
+            <>
+              <div className="flex items-center gap-2">
+                <button onClick={() => { setSelectedSite(null); setSpDrives([]); }} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"><ArrowLeft className="w-3 h-3" /> Sites</button>
+                <span className="text-xs text-muted-foreground">/</span>
+                <span className="text-xs font-medium">{selectedSite.displayName}</span>
+              </div>
+              <p className="text-xs text-muted-foreground">Select a document library:</p>
+              {loadingSp ? <Skeleton className="h-10 w-full" /> : (
+                <div className="border rounded-md divide-y">
+                  {spDrives.map(drive => (
+                    <button key={drive.id} onClick={async () => {
+                      setSelectedDrive(drive);
+                      setLoadingSp(true);
+                      try {
+                        const items = await listSpFolder({ accountId: account._id, siteId: selectedSite.id, driveId: drive.id });
+                        setSpItems(items.filter(i => i.folder));
+                      } catch { toast.error("Failed to load library"); }
+                      finally { setLoadingSp(false); }
+                    }} className="flex items-center gap-2 px-3 py-2.5 w-full text-left hover:bg-muted/50">
+                      <Database className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <span className="text-sm">{drive.name}</span>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 ml-auto" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={() => { setSelectedSite(null); setSelectedDrive(null); setSpDrives([]); setSpItems([]); }} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"><ArrowLeft className="w-3 h-3" /> Sites</button>
+                <span className="text-xs text-muted-foreground">/</span>
+                <button onClick={() => { setSelectedDrive(null); setSpItems([]); }} className="text-xs text-muted-foreground hover:text-foreground">{selectedSite.displayName}</button>
+                <span className="text-xs text-muted-foreground">/</span>
+                <span className="text-xs font-medium">{selectedDrive.name}</span>
+              </div>
+              {loadingSp ? (
+                <div className="space-y-1">{[1,2,3].map(i => <Skeleton key={i} className="h-8 w-full" />)}</div>
+              ) : spItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No folders found</p>
+              ) : (
+                <div className="border rounded-md p-2 max-h-64 overflow-y-auto space-y-0.5">
+                  {spItems.map(item => (
+                    <SpFolderNode key={item.id} item={item} accountId={account._id} siteId={selectedSite.id} driveId={selectedDrive.id} selectedIds={selectedSpIds} onToggle={toggleSpFolder} listFolder={listSpFolder} />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </TabsContent>
+      </Tabs>
+
+      {/* Selected sources summary */}
+      {selectedSources.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-foreground">Selected for scanning ({selectedSources.length}):</p>
+          <div className="space-y-1">
+            {selectedSources.map(s => (
+              <div key={s.id} className="flex items-center gap-2 bg-muted/50 rounded px-2 py-1">
+                {s.type === "mail" ? <Mail className="w-3 h-3 text-blue-400 shrink-0" /> : <Globe className="w-3 h-3 text-blue-400 shrink-0" />}
+                <span className="text-xs truncate flex-1">{s.label}</span>
+                <button onClick={() => onRemoveSource(s.id)} className="text-muted-foreground hover:text-destructive cursor-pointer shrink-0">
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <Button className="w-full gap-2" onClick={onStartScan}>
+            <ScanSearch className="w-4 h-4" />
+            Start Scan ({selectedSources.length} {selectedSources.length === 1 ? "folder" : "folders"})
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
 
 function EmailImportContent() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -27,6 +396,8 @@ function EmailImportContent() {
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(true);
   const [isConnecting, setIsConnecting] = useState(false);
   const [removingId, setRemovingId] = useState<Id<"m365Accounts"> | null>(null);
+  const [scanningAccount, setScanningAccount] = useState<Account | null>(null);
+  const [selectedSources, setSelectedSources] = useState<SelectedSource[]>([]);
 
   const getOAuthUrl = useAction(api.m365.actions.getOAuthUrl);
   const exchangeCode = useAction(api.m365.actions.exchangeCode);
@@ -44,36 +415,23 @@ function EmailImportContent() {
     }
   };
 
-  useEffect(() => {
-    loadAccounts();
-  }, []);
+  useEffect(() => { loadAccounts(); }, []);
 
-  // Handle OAuth callback result
   useEffect(() => {
-    const connected = searchParams.get("connected");
-    const error = searchParams.get("error");
     const code = searchParams.get("code");
     const state = searchParams.get("state");
+    const error = searchParams.get("error");
 
     if (code && state) {
-      // Exchange the code for tokens
       setIsConnecting(true);
       setSearchParams({}, { replace: true });
       exchangeCode({ code, state })
         .then((result) => {
-          if (result.ok) {
-            toast.success(`Microsoft account connected: ${result.email}`);
-            loadAccounts();
-          } else {
-            toast.error(`Connection failed: ${result.error}`);
-          }
+          if (result.ok) { toast.success(`Connected: ${result.email}`); loadAccounts(); }
+          else toast.error(`Connection failed: ${result.error}`);
         })
         .catch(() => toast.error("Failed to complete connection"))
         .finally(() => setIsConnecting(false));
-    } else if (connected === "1") {
-      toast.success("Microsoft account connected successfully!");
-      loadAccounts();
-      setSearchParams({}, { replace: true });
     } else if (error) {
       toast.error(`Connection failed: ${decodeURIComponent(error)}`);
       setSearchParams({}, { replace: true });
@@ -86,8 +444,7 @@ function EmailImportContent() {
       const url = await getOAuthUrl({});
       window.location.href = url;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to start connection";
-      toast.error(msg);
+      toast.error(err instanceof Error ? err.message : "Failed to start connection");
       setIsConnecting(false);
     }
   };
@@ -96,139 +453,123 @@ function EmailImportContent() {
     setRemovingId(accountId);
     try {
       await removeAccount({ accountId });
-      setAccounts((prev) => prev.filter((a) => a._id !== accountId));
+      setAccounts(prev => prev.filter(a => a._id !== accountId));
       toast.success("Account disconnected");
-    } catch {
-      toast.error("Failed to disconnect account");
-    } finally {
-      setRemovingId(null);
-    }
+    } catch { toast.error("Failed to disconnect account"); }
+    finally { setRemovingId(null); }
   };
 
   const isExpired = (expiresAt: string) => new Date(expiresAt) < new Date();
 
+  const handleStartScan = () => {
+    toast.info("CV Review & Import — coming in the next milestone!");
+  };
+
   return (
     <div className="p-6 max-w-2xl mx-auto space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Email Import</h1>
+        <h1 className="text-2xl font-bold text-foreground">Email & SharePoint Import</h1>
         <p className="text-muted-foreground mt-1">
-          Connect your Microsoft 365 mailboxes to scan emails for CV attachments.
+          Scan Microsoft 365 mailboxes and SharePoint folders for CV attachments.
         </p>
       </div>
 
-      {/* Setup instructions if no accounts */}
-      {!isLoadingAccounts && accounts.length === 0 && (
-        <Card className="border-dashed">
+      {scanningAccount ? (
+        <Card>
           <CardContent className="pt-6">
-            <Empty>
-              <EmptyHeader>
-                <EmptyMedia variant="icon"><Mail /></EmptyMedia>
-                <EmptyTitle>No mailboxes connected</EmptyTitle>
-                <EmptyDescription>
-                  Connect a Microsoft 365 mailbox to start importing CVs from emails. You can connect up to 10 mailboxes.
-                </EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent>
-                <Button onClick={handleConnect} disabled={isConnecting} className="gap-2">
-                  {isConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                  Connect Microsoft Account
-                </Button>
-              </EmptyContent>
-            </Empty>
+            <ScannerPanel
+              account={scanningAccount}
+              onBack={() => { setScanningAccount(null); setSelectedSources([]); }}
+              selectedSources={selectedSources}
+              onAddSource={(s) => setSelectedSources(prev => [...prev, s])}
+              onRemoveSource={(id) => setSelectedSources(prev => prev.filter(s => s.id !== id))}
+              onStartScan={handleStartScan}
+            />
           </CardContent>
         </Card>
-      )}
-
-      {/* Connected accounts list */}
-      {isLoadingAccounts ? (
-        <div className="space-y-3">
-          {[1, 2].map((i) => <Skeleton key={i} className="h-20 w-full" />)}
-        </div>
-      ) : accounts.length > 0 && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-foreground">Connected Mailboxes ({accounts.length}/10)</h2>
-            {accounts.length < 10 && (
-              <Button size="sm" variant="secondary" onClick={handleConnect} disabled={isConnecting} className="gap-1.5">
-                {isConnecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                Add Mailbox
-              </Button>
-            )}
-          </div>
-
-          {accounts.map((account) => (
-            <Card key={account._id}>
-              <CardContent className="flex items-center justify-between py-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
-                    <Mail className="w-4 h-4 text-blue-500" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-foreground">{account.displayName ?? account.email}</p>
-                    <p className="text-xs text-muted-foreground">{account.email}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  {isExpired(account.expiresAt) ? (
-                    <Badge variant="destructive" className="gap-1 text-xs">
-                      <AlertCircle className="w-3 h-3" />
-                      Expired
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary" className="gap-1 text-xs">
-                      <CheckCircle className="w-3 h-3 text-green-500" />
-                      Connected
-                    </Badge>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => handleRemove(account._id)}
-                    disabled={removingId === account._id}
-                    className="text-muted-foreground hover:text-destructive"
-                  >
-                    {removingId === account._id ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="w-4 h-4" />
-                    )}
-                  </Button>
-                </div>
+      ) : (
+        <>
+          {!isLoadingAccounts && accounts.length === 0 && (
+            <Card className="border-dashed">
+              <CardContent className="pt-6">
+                <Empty>
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon"><Mail /></EmptyMedia>
+                    <EmptyTitle>No accounts connected</EmptyTitle>
+                    <EmptyDescription>Connect a Microsoft 365 account to scan mailboxes and SharePoint for CVs.</EmptyDescription>
+                  </EmptyHeader>
+                  <EmptyContent>
+                    <Button onClick={handleConnect} disabled={isConnecting} className="gap-2">
+                      {isConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                      Connect Microsoft Account
+                    </Button>
+                  </EmptyContent>
+                </Empty>
               </CardContent>
             </Card>
-          ))}
-        </div>
-      )}
+          )}
 
-      {/* Setup guide */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Setup Required</CardTitle>
-          <CardDescription className="text-xs">
-            Before connecting, you need to register an app in Azure Active Directory and add the credentials to TalentBase secrets.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3 text-xs text-muted-foreground">
-          <div className="space-y-2">
-            <p className="font-medium text-foreground">Steps to set up:</p>
-            <ol className="list-decimal list-inside space-y-1.5">
-              <li>Go to <a href="https://portal.azure.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-0.5">portal.azure.com <ExternalLink className="w-3 h-3" /></a> and sign in with your company account</li>
-              <li>Navigate to <strong>Azure Active Directory → App registrations → New registration</strong></li>
-              <li>Name it "TalentBase", set Redirect URI to your Convex HTTP Actions URL + <code className="bg-muted px-1 rounded">/m365/callback</code></li>
-              <li>After creating, copy the <strong>Application (client) ID</strong></li>
-              <li>Under <strong>Certificates & secrets</strong>, create a new client secret and copy it</li>
-              <li>In TalentBase, go to <strong>Secrets</strong> and add:
-                <ul className="list-disc list-inside ml-4 mt-1 space-y-0.5">
-                  <li><code className="bg-muted px-1 rounded">MS_CLIENT_ID</code> — your Application ID</li>
-                  <li><code className="bg-muted px-1 rounded">MS_CLIENT_SECRET</code> — your client secret</li>
-                  <li><code className="bg-muted px-1 rounded">MS_REDIRECT_URI</code> — your Convex HTTP Actions URL + <code className="bg-muted px-1 rounded">/m365/callback</code></li>
-                  <li><code className="bg-muted px-1 rounded">APP_ORIGIN</code> — your TalentBase app URL (e.g. <code className="bg-muted px-1 rounded">https://yourapp.onhercules.app</code>)</li>
-                </ul>
-              </li>
-            </ol>
-          </div>
-        </CardContent>
-      </Card>
+          {isLoadingAccounts ? (
+            <div className="space-y-3">{[1, 2].map(i => <Skeleton key={i} className="h-20 w-full" />)}</div>
+          ) : accounts.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-foreground">Connected Accounts ({accounts.length}/10)</h2>
+                {accounts.length < 10 && (
+                  <Button size="sm" variant="secondary" onClick={handleConnect} disabled={isConnecting} className="gap-1.5">
+                    {isConnecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                    Add Account
+                  </Button>
+                )}
+              </div>
+              {accounts.map(account => (
+                <Card key={account._id}>
+                  <CardContent className="flex items-center justify-between py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
+                        <Mail className="w-4 h-4 text-blue-500" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{account.displayName ?? account.email}</p>
+                        <p className="text-xs text-muted-foreground">{account.email}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {isExpired(account.expiresAt) ? (
+                        <Badge variant="destructive" className="gap-1 text-xs"><AlertCircle className="w-3 h-3" />Expired</Badge>
+                      ) : (
+                        <Badge variant="secondary" className="gap-1 text-xs"><CheckCircle className="w-3 h-3 text-green-500" />Connected</Badge>
+                      )}
+                      <Button size="sm" variant="secondary" onClick={() => { setScanningAccount(account); setSelectedSources([]); }} className="gap-1.5 text-xs">
+                        <ScanSearch className="w-3.5 h-3.5" /> Browse
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => handleRemove(account._id)} disabled={removingId === account._id} className="text-muted-foreground hover:text-destructive">
+                        {removingId === account._id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Azure Setup Required</CardTitle>
+              <CardDescription className="text-xs">Register a Microsoft app to enable the connection.</CardDescription>
+            </CardHeader>
+            <CardContent className="text-xs text-muted-foreground space-y-2">
+              <ol className="list-decimal list-inside space-y-1.5">
+                <li>Go to <a href="https://portal.azure.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-0.5">portal.azure.com <ExternalLink className="w-3 h-3" /></a></li>
+                <li>Azure Active Directory → App registrations → New registration</li>
+                <li>Add Redirect URI: your Convex HTTP Actions URL + <code className="bg-muted px-1 rounded">/m365/callback</code></li>
+                <li>Add API permissions: <code className="bg-muted px-1 rounded">Mail.Read</code>, <code className="bg-muted px-1 rounded">Sites.Read.All</code>, <code className="bg-muted px-1 rounded">Files.Read.All</code>, <code className="bg-muted px-1 rounded">User.Read</code>, <code className="bg-muted px-1 rounded">offline_access</code></li>
+                <li>Add secrets: <code className="bg-muted px-1 rounded">MS_CLIENT_ID</code>, <code className="bg-muted px-1 rounded">MS_CLIENT_SECRET</code>, <code className="bg-muted px-1 rounded">MS_REDIRECT_URI</code>, <code className="bg-muted px-1 rounded">APP_ORIGIN</code></li>
+              </ol>
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }
@@ -237,15 +578,10 @@ export default function EmailImport() {
   return (
     <AppLayout>
       <Unauthenticated>
-        <div className="flex items-center justify-center h-full">
-          <SignInButton />
-        </div>
+        <div className="flex items-center justify-center h-full"><SignInButton /></div>
       </Unauthenticated>
       <AuthLoading>
-        <div className="p-6 space-y-4">
-          <Skeleton className="h-8 w-48" />
-          <Skeleton className="h-32 w-full" />
-        </div>
+        <div className="p-6 space-y-4"><Skeleton className="h-8 w-48" /><Skeleton className="h-32 w-full" /></div>
       </AuthLoading>
       <Authenticated>
         <EmailImportContent />
