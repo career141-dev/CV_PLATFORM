@@ -518,7 +518,7 @@ export const runImportBatch = internalAction({
   },
 });
 
-// ─── Process a single imported CV (full AI processing) ────────────────────────
+// ─── Process a single imported CV (lazy — text extraction only, no AI cost) ───
 
 export const processImportedCv = internalAction({
   args: {
@@ -527,7 +527,7 @@ export const processImportedCv = internalAction({
     fileType: v.string(),
   },
   handler: async (ctx, args): Promise<void> => {
-    await ctx.runAction(api.cvProcessing.processCv, {
+    await ctx.runAction(api.cvProcessing.extractTextOnly, {
       cvId: args.cvId,
       storageId: args.storageId,
       fileType: args.fileType,
