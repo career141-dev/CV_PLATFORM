@@ -138,9 +138,10 @@ async function scanMailFolderRecursive(
 ): Promise<void> {
   if (depth > 6) return;
 
-  // Scan messages in this folder that have attachments
+  // Scan messages in this folder — fetch all and check hasAttachments in code
+  // (OData $filter on hasAttachments is unreliable across mailbox types)
   let nextLink: string | null =
-    `${mailboxBase}/mailFolders/${folderId}/messages?$filter=hasAttachments eq true&$select=id,subject,hasAttachments&$top=50`;
+    `${mailboxBase}/mailFolders/${folderId}/messages?$select=id,subject,hasAttachments&$top=50`;
 
   while (nextLink) {
     const raw = nextLink.startsWith("https://")
