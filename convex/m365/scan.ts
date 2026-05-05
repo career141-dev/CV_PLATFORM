@@ -408,6 +408,8 @@ export const importMailAttachment = action({
     );
     if (!res.ok) throw new Error(`Failed to download attachment: ${res.status}`);
     const buffer = await res.arrayBuffer();
+    // Copy buffer before text extraction — pdfjs detaches the original ArrayBuffer
+    const bufferCopy = buffer.slice(0);
 
     // ── CV keyword check: extract text and verify it looks like a CV ──────────
     const lower = args.fileName.toLowerCase();
@@ -429,7 +431,7 @@ export const importMailAttachment = action({
     }
 
     return ctx.runAction(internal.m365.scan.storeAndProcess, {
-      buffer: new Uint8Array(buffer).buffer,
+      buffer: bufferCopy,
       fileName: args.fileName,
       tokenIdentifier: identity.tokenIdentifier,
       rawText: rawText.slice(0, 50000), // pass pre-extracted text to skip re-extraction
@@ -463,6 +465,9 @@ export const importBodyLinkFile = action({
 
     if (buffer.byteLength === 0) return { cvId: null, skipped: true, notACv: true };
 
+    // Copy buffer before text extraction — pdfjs detaches the original ArrayBuffer
+    const bufferCopy = buffer.slice(0);
+
     const lower = args.fileName.toLowerCase();
     const fileType = lower.endsWith(".pdf") ? "pdf"
       : lower.endsWith(".docx") ? "docx"
@@ -479,7 +484,7 @@ export const importBodyLinkFile = action({
     if (!looksLikeCv(rawText)) return { cvId: null, skipped: true, notACv: true };
 
     return ctx.runAction(internal.m365.scan.storeAndProcess, {
-      buffer: new Uint8Array(buffer).buffer,
+      buffer: bufferCopy,
       fileName: args.fileName,
       tokenIdentifier: identity.tokenIdentifier,
       rawText: rawText.slice(0, 50000),
