@@ -150,7 +150,10 @@ async function scanMailFolderRecursive(
     const res = await fetch(raw, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) break;
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Graph API error ${res.status} scanning mail folder: ${errText.slice(0, 300)}`);
+    }
     const data = (await res.json()) as { value: MailMessage[]; "@odata.nextLink"?: string };
     const messages = data.value ?? [];
 
