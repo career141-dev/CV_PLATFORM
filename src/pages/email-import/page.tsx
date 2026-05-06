@@ -622,58 +622,64 @@ function EmailImportContent() {
     let skipped = 0;
     let notCv = 0;
 
-    // Process in parallel batches of 5 to avoid overwhelming the API
-    const BATCH_SIZE = 5;
-    for (let i = 0; i < toImport.length; i += BATCH_SIZE) {
-      const batch = toImport.slice(i, i + BATCH_SIZE);
-      const batchResults = await Promise.allSettled(
-        batch.map(file => {
-          if (file.source === "sharepoint") {
-            return importSharePointFile({
-              accountId: scanningAccount._id,
-              siteId: file.siteId!,
-              driveId: file.driveId!,
-              itemId: file.itemId!,
-              fileName: file.name,
-            });
-          } else if (file.bodyLinkUrl) {
-            // CV linked in email body — download directly from URL
-            return importBodyLinkFile({
-              url: file.bodyLinkUrl,
-              fileName: file.name,
-            });
-          } else {
-            return importMailAttachment({
-              accountId: scanningAccount._id,
-              messageId: file.messageId!,
-              attachmentId: file.attachmentId!,
-              fileName: file.name,
-              sharedMailbox: file.sharedMailbox,
-            });
-          }
-        })
-      );
+    try {
+      // Process in parallel batches of 5 to avoid overwhelming the API
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < toImport.length; i += BATCH_SIZE) {
+        const batch = toImport.slice(i, i + BATCH_SIZE);
+        const batchResults = await Promise.allSettled(
+          batch.map(file => {
+            if (file.source === "sharepoint") {
+              return importSharePointFile({
+                accountId: scanningAccount._id,
+                siteId: file.siteId!,
+                driveId: file.driveId!,
+                itemId: file.itemId!,
+                fileName: file.name,
+              });
+            } else if (file.bodyLinkUrl) {
+              // CV linked in email body — download directly from URL
+              return importBodyLinkFile({
+                url: file.bodyLinkUrl,
+                fileName: file.name,
+              });
+            } else {
+              return importMailAttachment({
+                accountId: scanningAccount._id,
+                messageId: file.messageId!,
+                attachmentId: file.attachmentId!,
+                fileName: file.name,
+                sharedMailbox: file.sharedMailbox,
+              });
+            }
+          })
+        );
 
-      for (const result of batchResults) {
-        if (result.status === "fulfilled") {
-          if (result.value.skipped) {
-            if ("notACv" in result.value && result.value.notACv) notCv++;
-            else skipped++;
+        for (const result of batchResults) {
+          if (result.status === "fulfilled") {
+            if (result.value.skipped) {
+              if ("notACv" in result.value && result.value.notACv) notCv++;
+              else skipped++;
+            }
+          } else {
+            errors++;
           }
-        } else {
-          errors++;
         }
+        setImportProgress(p => ({ ...p, done: Math.min(p.done + batch.length, toImport.length), errors, skipped, notCv }));
       }
-      setImportProgress(p => ({ ...p, done: Math.min(p.done + batch.length, toImport.length), errors, skipped, notCv }));
+
+      const imported = toImport.length - errors - skipped - notCv;
+      if (imported > 0) toast.success(`${imported} CV${imported !== 1 ? "s" : ""} imported successfully!`);
+      if (skipped > 0) toast.info(`${skipped} file${skipped !== 1 ? "s" : ""} already imported — skipped.`);
+      if (notCv > 0) toast.info(`${notCv} file${notCv !== 1 ? "s" : ""} did not appear to be a CV — skipped.`);
+      if (errors > 0) toast.error(`${errors} file${errors !== 1 ? "s" : ""} failed to import.`);
+    } catch (err) {
+      toast.error(`Import error: ${err instanceof Error ? err.message.slice(0, 120) : "Unknown error"}`);
+      errors++;
     }
 
-    const imported = toImport.length - errors - skipped - notCv;
-    if (imported > 0) toast.success(`${imported} CV${imported !== 1 ? "s" : ""} imported successfully!`);
-    if (skipped > 0) toast.info(`${skipped} file${skipped !== 1 ? "s" : ""} already imported — skipped.`);
-    if (notCv > 0) toast.info(`${notCv} file${notCv !== 1 ? "s" : ""} did not appear to be a CV — skipped.`);
-    if (errors > 0) toast.error(`${errors} file${errors !== 1 ? "s" : ""} failed to import.`);
-
-    // Show done summary instead of immediately resetting
+    // Always show the done summary screen regardless of success or failure
+    setImportProgress(p => ({ ...p, errors }));
     setPhase("done");
   };
 
