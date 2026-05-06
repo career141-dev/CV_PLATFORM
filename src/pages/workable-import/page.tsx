@@ -559,11 +559,15 @@ function ImportContent() {
   );
 }
 
+import RoleGuard from "@/components/role-guard.tsx";
+
 export default function WorkableImportPage() {
   return (
     <AppLayout>
       <Authenticated>
-        <ImportContent />
+        <RoleGuard allowedRoles={["admin"]}>
+          <ImportContent />
+        </RoleGuard>
       </Authenticated>
     </AppLayout>
   );

@@ -3,6 +3,7 @@ import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import { Authenticated } from "convex/react";
 import AppLayout from "@/components/app-layout.tsx";
+import { useRole } from "@/hooks/use-role.ts";
 import { Button } from "@/components/ui/button.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
@@ -474,6 +475,8 @@ function JobCard({ job, onSelect }: { job: Job; onSelect: () => void }) {
   const deleteJob = useMutation(api.jobs.deleteJob);
   const pipeline = useQuery(api.pipeline.getPipelineForJob, { jobId: job._id });
   const pipelineCount = pipeline?.length ?? 0;
+  const role = useRole();
+  const canEdit = role === "admin" || role === "recruiter";
 
   return (
     <motion.div
@@ -496,16 +499,18 @@ function JobCard({ job, onSelect }: { job: Job; onSelect: () => void }) {
           <p className="text-xs text-muted-foreground line-clamp-2">{job.description}</p>
         </div>
         <div className="flex flex-col items-end gap-2 shrink-0">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!confirm("Delete this job?")) return;
-              deleteJob({ jobId: job._id }).catch(() => toast.error("Failed to delete"));
-            }}
-            className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all cursor-pointer"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
+          {canEdit && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!confirm("Delete this job?")) return;
+                deleteJob({ jobId: job._id }).catch(() => toast.error("Failed to delete"));
+              }}
+              className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
           <div className="flex items-center gap-2">
             {job.matchResults && job.matchResults.length > 0 && (
               <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
@@ -782,6 +787,8 @@ function JobsContent() {
   const [selectedJobId, setSelectedJobId] = useState<Id<"jobs"> | null>(null);
   const [autoMatchDesc, setAutoMatchDesc] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const role = useRole();
+  const canEdit = role === "admin" || role === "recruiter";
 
   const selectedJob = jobs?.find((j) => j._id === selectedJobId) as Job | undefined;
 
@@ -819,9 +826,11 @@ function JobsContent() {
             Create job openings, auto-match candidates, and manage your hiring pipeline.
           </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)} className="gap-2 shrink-0">
-          <Plus className="w-4 h-4" /> New Job
-        </Button>
+        {canEdit && (
+          <Button onClick={() => setCreateOpen(true)} className="gap-2 shrink-0">
+            <Plus className="w-4 h-4" /> New Job
+          </Button>
+        )}
       </div>
 
       {jobs.length === 0 ? (
@@ -829,9 +838,11 @@ function JobsContent() {
           <Briefcase className="w-12 h-12 mx-auto mb-4 opacity-20" />
           <p className="text-sm font-medium mb-1">No jobs yet</p>
           <p className="text-xs mb-5">Create your first job opening to start matching and shortlisting candidates</p>
-          <Button onClick={() => setCreateOpen(true)} className="gap-2">
-            <Plus className="w-4 h-4" /> Create Job
-          </Button>
+          {canEdit && (
+            <Button onClick={() => setCreateOpen(true)} className="gap-2">
+              <Plus className="w-4 h-4" /> Create Job
+            </Button>
+          )}
         </div>
       ) : (
         <div className="space-y-3">

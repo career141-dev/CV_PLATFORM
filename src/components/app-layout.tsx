@@ -8,17 +8,14 @@ import { Button } from "@/components/ui/button.tsx";
 import { cn } from "@/lib/utils.ts";
 
 const baseNavItems = [
-  { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard" },
-  { icon: Search, label: "Search CVs", href: "/search" },
-  { icon: Briefcase, label: "Jobs", href: "/jobs" },
-  { icon: Target, label: "JD Matching", href: "/jd-match" },
-  { icon: Upload, label: "Upload CVs", href: "/upload" },
-  { icon: DatabaseZap, label: "Workable Import", href: "/workable-import" },
-  { icon: Mail, label: "Email Import", href: "/email-import" },
-];
-
-const adminNavItems = [
-  { icon: UserCog, label: "Users", href: "/users" },
+  { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard", roles: ["admin", "recruiter", "viewer"] },
+  { icon: Search, label: "Search CVs", href: "/search", roles: ["admin", "recruiter", "viewer"] },
+  { icon: Briefcase, label: "Jobs", href: "/jobs", roles: ["admin", "recruiter", "viewer"] },
+  { icon: Target, label: "JD Matching", href: "/jd-match", roles: ["admin", "recruiter", "viewer"] },
+  { icon: Upload, label: "Upload CVs", href: "/upload", roles: ["admin", "recruiter"] },
+  { icon: DatabaseZap, label: "Workable Import", href: "/workable-import", roles: ["admin"] },
+  { icon: Mail, label: "Email Import", href: "/email-import", roles: ["admin"] },
+  { icon: UserCog, label: "Users", href: "/users", roles: ["admin"] },
 ];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
@@ -27,7 +24,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const navItems = role === "admin" ? [...baseNavItems, ...adminNavItems] : baseNavItems;
+  const navItems = role ? baseNavItems.filter(item => item.roles.includes(role)) : [];
 
   return (
     <div className="flex h-screen bg-background">

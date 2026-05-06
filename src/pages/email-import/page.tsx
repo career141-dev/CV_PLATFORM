@@ -1034,6 +1034,8 @@ function EmailImportContent() {
   );
 }
 
+import RoleGuard from "@/components/role-guard.tsx";
+
 export default function EmailImport() {
   return (
     <AppLayout>
@@ -1044,7 +1046,9 @@ export default function EmailImport() {
         <div className="p-6 space-y-4"><Skeleton className="h-8 w-48" /><Skeleton className="h-32 w-full" /></div>
       </AuthLoading>
       <Authenticated>
-        <EmailImportContent />
+        <RoleGuard allowedRoles={["admin"]}>
+          <EmailImportContent />
+        </RoleGuard>
       </Authenticated>
     </AppLayout>
   );

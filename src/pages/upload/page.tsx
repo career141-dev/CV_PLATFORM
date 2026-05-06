@@ -286,11 +286,15 @@ function StatusBadge({ status }: { status: FileStatus }) {
   }
 }
 
+import RoleGuard from "@/components/role-guard.tsx";
+
 export default function UploadPage() {
   return (
     <Authenticated>
       <AppLayout>
-        <UploadContent />
+        <RoleGuard allowedRoles={["admin", "recruiter"]}>
+          <UploadContent />
+        </RoleGuard>
       </AppLayout>
     </Authenticated>
   );

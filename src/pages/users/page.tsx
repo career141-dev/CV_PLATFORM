@@ -239,11 +239,15 @@ function UsersPageInner() {
   );
 }
 
+import RoleGuard from "@/components/role-guard.tsx";
+
 export default function UsersPage() {
   return (
     <AppLayout>
       <Authenticated>
-        <UsersPageInner />
+        <RoleGuard allowedRoles={["admin"]}>
+          <UsersPageInner />
+        </RoleGuard>
       </Authenticated>
     </AppLayout>
   );
