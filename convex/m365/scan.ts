@@ -299,15 +299,15 @@ export const scanSharePointFolder = action({
 });
 
 // ─── Cursor-based batch SharePoint scan ──────────────────────────────────────
-// Processes folders in batches to avoid Convex action timeouts on large trees.
+// Processes one folder at a time (fully paginated) per batch call.
+// Cursor is always at a clean folder boundary to avoid resume bugs.
 
 type SpQueueEntry = { itemId: string | null; pathLabel: string; depth: number };
 type SpScanCursor = {
-  queue: SpQueueEntry[];        // folders yet to be scanned
-  currentNextLink: string | null; // pagination URL within the current folder
+  queue: SpQueueEntry[];
 };
 
-const BATCH_SP_ITEM_LIMIT = 500; // items processed per action call
+const BATCH_SP_FOLDER_LIMIT = 10; // folders fully processed per action call
 
 export const scanSharePointFolderBatch = action({
   args: {
@@ -316,7 +316,7 @@ export const scanSharePointFolderBatch = action({
     driveId: v.string(),
     itemId: v.optional(v.string()),
     folderName: v.string(),
-    cursor: v.optional(v.string()), // JSON-serialised SpScanCursor, null = first call
+    cursor: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{
     files: FoundFile[];
@@ -336,105 +336,66 @@ export const scanSharePointFolderBatch = action({
     } else {
       state = {
         queue: [{ itemId: args.itemId ?? null, pathLabel: args.folderName, depth: 0 }],
-        currentNextLink: null,
       };
     }
 
     const files: FoundFile[] = [];
     let itemsScanned = 0;
+    let foldersProcessed = 0;
 
+    // Helper: fetch a full page (handles both relative Graph paths and absolute nextLink URLs)
     const fetchPage = async (url: string): Promise<{ value: DriveItem[]; "@odata.nextLink"?: string }> => {
       if (url.startsWith("https://")) {
         const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-        if (!res.ok) throw new Error(`Graph error ${res.status}`);
+        if (!res.ok) throw new Error(`Graph error ${res.status}: ${await res.text().then(t => t.slice(0, 200))}`);
         return res.json() as Promise<{ value: DriveItem[]; "@odata.nextLink"?: string }>;
       }
       return graphGet<{ value: DriveItem[]; "@odata.nextLink"?: string }>(token, url);
     };
 
-    outer: while (state.queue.length > 0 || state.currentNextLink) {
-      let pageUrl: string;
+    while (state.queue.length > 0 && foldersProcessed < BATCH_SP_FOLDER_LIMIT) {
+      const entry = state.queue.shift()!;
+      if (entry.depth > 8) continue;
 
-      if (state.currentNextLink) {
-        // Resume paging within a folder
-        pageUrl = state.currentNextLink;
-        state.currentNextLink = null;
-      } else {
-        // Start a new folder from queue
-        const entry = state.queue.shift()!;
-        if (entry.depth > 8) continue;
-        pageUrl = entry.itemId
-          ? `${base}/items/${entry.itemId}/children?$top=200&$select=id,name,folder,file,size`
-          : `${base}/root/children?$top=200&$select=id,name,folder,file,size`;
-        // Push a sentinel to track current folder context for nextLink
-        state.currentNextLink = null;
+      // Fully paginate this folder before moving on
+      let pageUrl: string | null = entry.itemId
+        ? `${base}/items/${entry.itemId}/children?$top=200&$select=id,name,folder,file,size`
+        : `${base}/root/children?$top=200&$select=id,name,folder,file,size`;
 
-        // Process this page URL within the context of this folder
-        let folderNextLink: string | null = pageUrl;
-        while (folderNextLink) {
-          const data = await fetchPage(folderNextLink);
-          const items = data.value ?? [];
-          itemsScanned += items.length;
+      while (pageUrl) {
+        const data = await fetchPage(pageUrl);
+        const items = data.value ?? [];
+        itemsScanned += items.length;
 
-          for (const item of items) {
-            if (item.folder && entry.depth < 8) {
-              state.queue.push({ itemId: item.id, pathLabel: `${entry.pathLabel}/${item.name}`, depth: entry.depth + 1 });
-            } else if (item.file && isCvFile(item.name, item.file.mimeType)) {
-              files.push({
-                id: `sp-${item.id}`,
-                name: item.name,
-                size: item.size ?? 0,
-                source: "sharepoint",
-                driveId: args.driveId,
-                siteId: args.siteId,
-                itemId: item.id,
-                folderPath: entry.pathLabel,
-              });
-            }
-          }
-
-          folderNextLink = data["@odata.nextLink"] ?? null;
-
-          if (itemsScanned >= BATCH_SP_ITEM_LIMIT) {
-            if (folderNextLink) {
-              // Save where we are within this page sequence
-              state.currentNextLink = folderNextLink;
-              // Re-add current folder entry's remaining work is tracked via currentNextLink
-            }
-            break outer;
+        for (const item of items) {
+          if (item.folder && entry.depth < 8) {
+            // Add subfolders to the queue to be processed in this or future batches
+            state.queue.push({
+              itemId: item.id,
+              pathLabel: `${entry.pathLabel}/${item.name}`,
+              depth: entry.depth + 1,
+            });
+          } else if (item.file && isCvFile(item.name, item.file.mimeType)) {
+            files.push({
+              id: `sp-${item.id}`,
+              name: item.name,
+              size: item.size ?? 0,
+              source: "sharepoint",
+              driveId: args.driveId,
+              siteId: args.siteId,
+              itemId: item.id,
+              folderPath: entry.pathLabel,
+            });
           }
         }
-        continue; // already processed this entry inline, go to next in queue
+
+        pageUrl = data["@odata.nextLink"] ?? null;
       }
 
-      // Handle resume of currentNextLink (shouldn't reach here with above logic but kept for safety)
-      const data = await fetchPage(pageUrl);
-      const items = data.value ?? [];
-      itemsScanned += items.length;
-
-      for (const item of items) {
-        if (item.folder) {
-          state.queue.push({ itemId: item.id, pathLabel: item.name, depth: 1 });
-        } else if (item.file && isCvFile(item.name, item.file.mimeType)) {
-          files.push({
-            id: `sp-${item.id}`,
-            name: item.name,
-            size: item.size ?? 0,
-            source: "sharepoint",
-            driveId: args.driveId,
-            siteId: args.siteId,
-            itemId: item.id,
-            folderPath: item.name,
-          });
-        }
-      }
-
-      if (data["@odata.nextLink"]) state.currentNextLink = data["@odata.nextLink"];
-
-      if (itemsScanned >= BATCH_SP_ITEM_LIMIT) break;
+      foldersProcessed++;
     }
 
-    const isDone = state.queue.length === 0 && !state.currentNextLink;
+    const isDone = state.queue.length === 0;
     return {
       files,
       nextCursor: isDone ? null : JSON.stringify(state),

@@ -604,7 +604,9 @@ function EmailImportContent() {
         setPhase("summary");
       }
     } catch (err) {
-      setScanError(err instanceof Error ? err.message : "Scan failed");
+      const msg = err instanceof Error ? err.message : "Scan failed";
+      setScanError(msg);
+      toast.error(`Scan failed: ${msg.slice(0, 120)}`);
       setPhase("browse");
     }
   };
