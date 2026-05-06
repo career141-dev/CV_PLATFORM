@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Brain, LayoutDashboard, Search, Upload, LogOut, Menu, X, Target, DatabaseZap, Briefcase, Mail, UserCog } from "lucide-react";
+import { LayoutDashboard, Search, Upload, LogOut, Menu, X, Target, DatabaseZap, Briefcase, Mail, UserCog } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth.ts";
 import { useRole } from "@/hooks/use-role.ts";
 import { Button } from "@/components/ui/button.tsx";
@@ -30,11 +30,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     <div className="flex h-screen bg-background">
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex flex-col w-56 bg-sidebar border-r border-sidebar-border shrink-0">
-        <div className="p-4 flex items-center gap-2.5 border-b border-sidebar-border">
-          <div className="w-7 h-7 rounded-md bg-sidebar-primary flex items-center justify-center">
-            <Brain className="w-4 h-4 text-sidebar-primary-foreground" />
-          </div>
-          <span className="font-bold text-sidebar-foreground text-sm">TalentBase</span>
+        <div className="p-4 flex items-center border-b border-sidebar-border">
+          <img src="https://hercules-cdn.com/file_f8BmJ62aM7DCa5uZEscvjRw3" alt="Career141" className="h-8 w-auto" />
         </div>
 
         <nav className="flex-1 p-3 space-y-1">
@@ -77,8 +74,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       {/* Mobile top bar */}
       <div className="md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-3 bg-sidebar border-b border-sidebar-border">
         <div className="flex items-center gap-2">
-          <Brain className="w-5 h-5 text-sidebar-primary" />
-          <span className="font-bold text-sidebar-foreground text-sm">TalentBase</span>
+          <img src="https://hercules-cdn.com/file_f8BmJ62aM7DCa5uZEscvjRw3" alt="Career141" className="h-6 w-auto" />
         </div>
         <button onClick={() => setMobileOpen(!mobileOpen)} className="text-sidebar-foreground cursor-pointer">
           {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
