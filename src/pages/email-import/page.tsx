@@ -431,6 +431,7 @@ function EmailImportContent() {
   const listAccounts = useAction(api.m365.actions.listAccounts);
   const removeAccount = useAction(api.m365.actions.removeAccount);
   const scanSharePointFolder = useAction(api.m365.scan.scanSharePointFolder);
+  const scanSharePointFolderBatch = useAction(api.m365.scan.scanSharePointFolderBatch);
   const scanMailFolder = useAction(api.m365.scan.scanMailFolder);
   const scanMailFolderBatch = useAction(api.m365.scan.scanMailFolderBatch);
   const importSharePointFile = useAction(api.m365.scan.importSharePointFile);
@@ -536,23 +537,31 @@ function EmailImportContent() {
       let totalMessagesScanned = 0;
       let scanErrors = 0;
 
-      // Run SharePoint scans in parallel (they don't time out like mail)
       const spSources = sources.filter(s => s.type === "sharepoint");
       const mailSources = sources.filter(s => s.type === "mail");
 
+      // Run SharePoint scans sequentially with cursor-based batching
       if (spSources.length > 0) {
-        const spResults = await Promise.allSettled(
-          spSources.map(source => scanSharePointFolder({
-            accountId: source.accountId,
-            siteId: source.siteId!,
-            driveId: source.driveId!,
-            itemId: source.itemId,
-            folderName: source.label,
-          }))
-        );
-        for (const result of spResults) {
-          if (result.status === "fulfilled") allFiles.push(...result.value);
-          else scanErrors++;
+        for (const source of spSources) {
+          let spCursor: string | undefined = undefined;
+          let spDone = false;
+          while (!spDone) {
+            const batch = await scanSharePointFolderBatch({
+              accountId: source.accountId,
+              siteId: source.siteId!,
+              driveId: source.driveId!,
+              itemId: source.itemId,
+              folderName: source.label,
+              cursor: spCursor,
+            });
+            allFiles.push(...batch.files);
+            setScanProgress({ messagesScanned: totalMessagesScanned, cvsFound: allFiles.length });
+            if (batch.nextCursor) {
+              spCursor = batch.nextCursor;
+            } else {
+              spDone = true;
+            }
+          }
         }
       }
 
