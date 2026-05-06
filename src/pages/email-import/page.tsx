@@ -565,18 +565,30 @@ function EmailImportContent() {
         }
       }
 
-      // Run mail scans sequentially with cursor-based batching
+      // Run mail scans sequentially with cursor-based batching + retry
       for (const source of mailSources) {
         let cursor: string | undefined = undefined;
         let done = false;
         while (!done) {
-          const batch = await scanMailFolderBatch({
-            accountId: source.accountId,
-            folderId: source.id,
-            folderName: source.label,
-            sharedMailbox: source.sharedMailbox,
-            cursor,
-          });
+          let retries = 3;
+          let batch: { files: FoundFile[]; nextCursor: string | null; messagesScanned: number } | null = null;
+          while (retries > 0) {
+            try {
+              batch = await scanMailFolderBatch({
+                accountId: source.accountId,
+                folderId: source.id,
+                folderName: source.label,
+                sharedMailbox: source.sharedMailbox,
+                cursor,
+              });
+              break;
+            } catch (err) {
+              retries--;
+              if (retries === 0) throw err;
+              await new Promise<void>(r => setTimeout(r, 2000));
+            }
+          }
+          if (!batch) break;
           allFiles.push(...batch.files);
           totalMessagesScanned += batch.messagesScanned;
           setScanProgress({ messagesScanned: totalMessagesScanned, cvsFound: allFiles.length });

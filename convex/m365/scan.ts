@@ -437,7 +437,7 @@ type MailScanCursor = {
   currentNextLink: string | null;  // resume URL within the current folder
 };
 
-const BATCH_MSG_LIMIT = 100; // messages processed per action call
+const BATCH_MSG_LIMIT = 50; // messages processed per action call
 
 export const scanMailFolderBatch = action({
   args: {
