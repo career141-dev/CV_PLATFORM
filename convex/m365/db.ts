@@ -51,6 +51,7 @@ export const upsertAccount = internalMutation({
       .first();
     if (existing) {
       await ctx.db.patch(existing._id, {
+        userId: args.userId,
         accessToken: args.accessToken,
         refreshToken: args.refreshToken,
         expiresAt: args.expiresAt,
