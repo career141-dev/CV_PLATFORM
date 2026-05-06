@@ -486,7 +486,7 @@ function EmailImportContent() {
         }
         try {
           const result = await exchangeCode({ code, state });
-          if (result.ok) { toast.success(`Connected: ${result.email}`); loadAccounts(); }
+          if (result.ok) { toast.success(`Connected: ${result.email}`); setTimeout(() => loadAccounts(), 1000); }
           else toast.error(`Connection failed: ${result.error}`);
         } catch {
           toast.error("Failed to complete connection");
