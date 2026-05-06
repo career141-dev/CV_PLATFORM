@@ -417,7 +417,7 @@ function EmailImportContent() {
   const [selectedSources, setSelectedSources] = useState<SelectedSource[]>([]);
 
   // Scan & review state
-  const [phase, setPhase] = useState<"browse" | "scanning" | "summary" | "sample" | "review" | "importing">("browse");
+  const [phase, setPhase] = useState<"browse" | "scanning" | "summary" | "sample" | "review" | "importing" | "done">("browse");
   const [foundFiles, setFoundFiles] = useState<FoundFile[]>([]);
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
   const [importProgress, setImportProgress] = useState<{ done: number; total: number; errors: number; skipped: number; notCv: number }>({ done: 0, total: 0, errors: 0, skipped: 0, notCv: 0 });
@@ -671,11 +671,8 @@ function EmailImportContent() {
     if (notCv > 0) toast.info(`${notCv} file${notCv !== 1 ? "s" : ""} did not appear to be a CV — skipped.`);
     if (errors > 0) toast.error(`${errors} file${errors !== 1 ? "s" : ""} failed to import.`);
 
-    // Reset back to account list
-    setPhase("browse");
-    setScanningAccount(null);
-    setSelectedSources([]);
-    setFoundFiles([]);
+    // Show done summary instead of immediately resetting
+    setPhase("done");
   };
 
   const formatBytes = (bytes: number) => {
@@ -790,6 +787,46 @@ function EmailImportContent() {
                 <CheckCircle className="w-4 h-4" /> Yes, Import All
               </Button>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Done phase */}
+      {phase === "done" && (
+        <Card>
+          <CardContent className="pt-8 pb-8 flex flex-col items-center gap-6">
+            <div className="flex flex-col items-center gap-2">
+              <CheckCircle className="w-12 h-12 text-green-500" />
+              <h3 className="text-lg font-semibold">Import Complete</h3>
+            </div>
+            <div className="grid grid-cols-2 gap-3 w-full max-w-sm">
+              <div className="bg-muted rounded-lg p-4 text-center">
+                <p className="text-2xl font-bold text-primary">
+                  {importProgress.total - importProgress.errors - importProgress.skipped - importProgress.notCv}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">CVs imported</p>
+              </div>
+              <div className="bg-muted rounded-lg p-4 text-center">
+                <p className="text-2xl font-bold">{importProgress.skipped}</p>
+                <p className="text-xs text-muted-foreground mt-1">Already existed</p>
+              </div>
+              <div className="bg-muted rounded-lg p-4 text-center">
+                <p className="text-2xl font-bold">{importProgress.notCv}</p>
+                <p className="text-xs text-muted-foreground mt-1">Not a CV</p>
+              </div>
+              <div className="bg-muted rounded-lg p-4 text-center">
+                <p className={`text-2xl font-bold ${importProgress.errors > 0 ? "text-destructive" : ""}`}>{importProgress.errors}</p>
+                <p className="text-xs text-muted-foreground mt-1">Failed</p>
+              </div>
+            </div>
+            <Button className="w-full max-w-sm" onClick={() => {
+              setPhase("browse");
+              setScanningAccount(null);
+              setSelectedSources([]);
+              setFoundFiles([]);
+            }}>
+              Done
+            </Button>
           </CardContent>
         </Card>
       )}
