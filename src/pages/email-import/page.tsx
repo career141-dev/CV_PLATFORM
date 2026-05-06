@@ -424,6 +424,7 @@ function EmailImportContent() {
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanStats, setScanStats] = useState<{ folders: number; totalFiles: number; totalSize: number } | null>(null);
   const [sampleFiles, setSampleFiles] = useState<FoundFile[]>([]);
+  const [scanProgress, setScanProgress] = useState<{ messagesScanned: number; cvsFound: number } | null>(null);
 
   const getOAuthUrl = useAction(api.m365.actions.getOAuthUrl);
   const exchangeCode = useAction(api.m365.actions.exchangeCode);
@@ -431,6 +432,7 @@ function EmailImportContent() {
   const removeAccount = useAction(api.m365.actions.removeAccount);
   const scanSharePointFolder = useAction(api.m365.scan.scanSharePointFolder);
   const scanMailFolder = useAction(api.m365.scan.scanMailFolder);
+  const scanMailFolderBatch = useAction(api.m365.scan.scanMailFolderBatch);
   const importSharePointFile = useAction(api.m365.scan.importSharePointFile);
   const importMailAttachment = useAction(api.m365.scan.importMailAttachment);
   const importBodyLinkFile = useAction(api.m365.scan.importBodyLinkFile);
@@ -527,39 +529,56 @@ function EmailImportContent() {
     setFoundFiles([]);
     setSelectedFileIds(new Set());
     setScanStats(null);
+    setScanProgress({ messagesScanned: 0, cvsFound: 0 });
 
     try {
-      // Scan all selected folders in parallel
-      const results = await Promise.allSettled(
-        sources.map(source => {
-          if (source.type === "sharepoint") {
-            return scanSharePointFolder({
-              accountId: source.accountId,
-              siteId: source.siteId!,
-              driveId: source.driveId!,
-              itemId: source.itemId,
-              folderName: source.label,
-            });
-          } else {
-            return scanMailFolder({
-              accountId: source.accountId,
-              folderId: source.id,
-              folderName: source.label,
-              sharedMailbox: source.sharedMailbox,
-            });
-          }
-        })
-      );
-
       const allFiles: FoundFile[] = [];
+      let totalMessagesScanned = 0;
       let scanErrors = 0;
-      for (const result of results) {
-        if (result.status === "fulfilled") {
-          allFiles.push(...result.value);
-        } else {
-          scanErrors++;
+
+      // Run SharePoint scans in parallel (they don't time out like mail)
+      const spSources = sources.filter(s => s.type === "sharepoint");
+      const mailSources = sources.filter(s => s.type === "mail");
+
+      if (spSources.length > 0) {
+        const spResults = await Promise.allSettled(
+          spSources.map(source => scanSharePointFolder({
+            accountId: source.accountId,
+            siteId: source.siteId!,
+            driveId: source.driveId!,
+            itemId: source.itemId,
+            folderName: source.label,
+          }))
+        );
+        for (const result of spResults) {
+          if (result.status === "fulfilled") allFiles.push(...result.value);
+          else scanErrors++;
         }
       }
+
+      // Run mail scans sequentially with cursor-based batching
+      for (const source of mailSources) {
+        let cursor: string | undefined = undefined;
+        let done = false;
+        while (!done) {
+          const batch = await scanMailFolderBatch({
+            accountId: source.accountId,
+            folderId: source.id,
+            folderName: source.label,
+            sharedMailbox: source.sharedMailbox,
+            cursor,
+          });
+          allFiles.push(...batch.files);
+          totalMessagesScanned += batch.messagesScanned;
+          setScanProgress({ messagesScanned: totalMessagesScanned, cvsFound: allFiles.length });
+          if (batch.nextCursor) {
+            cursor = batch.nextCursor;
+          } else {
+            done = true;
+          }
+        }
+      }
+
       if (scanErrors > 0) toast.warning(`${scanErrors} folder${scanErrors !== 1 ? "s" : ""} failed to scan.`);
       setFoundFiles(allFiles);
       setSelectedFileIds(new Set(allFiles.map(f => f.id)));
@@ -571,7 +590,6 @@ function EmailImportContent() {
         toast.info("No CV files found in the selected folders.");
         setPhase("browse");
       } else {
-        // Pick up to 10 random files as the sample
         const shuffled = [...allFiles].sort(() => Math.random() - 0.5);
         setSampleFiles(shuffled.slice(0, 10));
         setPhase("summary");
@@ -672,7 +690,18 @@ function EmailImportContent() {
           <CardContent className="pt-8 pb-8 flex flex-col items-center gap-4">
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
             <p className="text-sm font-medium">Scanning folders for CV files...</p>
-            <p className="text-xs text-muted-foreground">This may take a moment for large folders.</p>
+            {scanProgress && scanProgress.messagesScanned > 0 ? (
+              <div className="flex flex-col items-center gap-1">
+                <p className="text-xs text-muted-foreground">
+                  {scanProgress.messagesScanned.toLocaleString()} messages scanned
+                </p>
+                <p className="text-xs font-medium text-primary">
+                  {scanProgress.cvsFound} CV{scanProgress.cvsFound !== 1 ? "s" : ""} found so far
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">This may take a while for large folders.</p>
+            )}
           </CardContent>
         </Card>
       )}

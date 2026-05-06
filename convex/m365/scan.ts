@@ -285,7 +285,7 @@ export const scanSharePointFolder = action({
   },
 });
 
-// ─── Scan mail folder action ──────────────────────────────────────────────────
+// ─── Scan mail folder action (legacy, single-shot) ───────────────────────────
 
 export const scanMailFolder = action({
   args: {
@@ -305,6 +305,165 @@ export const scanMailFolder = action({
     const results: FoundFile[] = [];
     await scanMailFolderRecursive(token, mailboxBase, args.folderId, args.folderName, results, 0, args.sharedMailbox);
     return results;
+  },
+});
+
+// ─── Cursor-based batch mail scan ─────────────────────────────────────────────
+// Processes up to BATCH_MSG_LIMIT messages per call to avoid Convex action timeout.
+// The cursor encodes the remaining work so the frontend can resume with another call.
+
+type ScanQueueEntry = { folderId: string; folderName: string; depth: number };
+type MailScanCursor = {
+  queue: ScanQueueEntry[];         // folders yet to be scanned
+  currentNextLink: string | null;  // resume URL within the current folder
+};
+
+const BATCH_MSG_LIMIT = 300; // messages processed per action call
+
+export const scanMailFolderBatch = action({
+  args: {
+    accountId: v.id("m365Accounts"),
+    folderId: v.string(),      // root folder (only used when cursor is null)
+    folderName: v.string(),    // root folder display name
+    sharedMailbox: v.optional(v.string()),
+    cursor: v.optional(v.string()), // JSON-serialised MailScanCursor, null = first call
+  },
+  handler: async (ctx, args): Promise<{
+    files: FoundFile[];
+    nextCursor: string | null;
+    messagesScanned: number;
+  }> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
+
+    const token = await ctx.runAction(internal.m365.scanHelpers.getToken, { accountId: args.accountId });
+    const mailboxBase = args.sharedMailbox
+      ? `/users/${encodeURIComponent(args.sharedMailbox)}`
+      : "/me";
+
+    // Initialise or deserialise cursor
+    let state: MailScanCursor;
+    if (args.cursor) {
+      state = JSON.parse(args.cursor) as MailScanCursor;
+    } else {
+      // First call — seed the queue with the root folder
+      state = { queue: [{ folderId: args.folderId, folderName: args.folderName, depth: 0 }], currentNextLink: null };
+    }
+
+    const files: FoundFile[] = [];
+    let messagesScanned = 0;
+
+    // Work through the queue until we hit the batch limit or run out of work
+    while (messagesScanned < BATCH_MSG_LIMIT) {
+      // Resume current folder or pick next from queue
+      let nextLink: string | null = state.currentNextLink;
+      let current: ScanQueueEntry | undefined;
+
+      if (!nextLink) {
+        current = state.queue.shift();
+        if (!current) break; // all done
+        nextLink = `https://graph.microsoft.com/v1.0${mailboxBase}/mailFolders/${current.folderId}/messages?$select=id,subject,hasAttachments,body&$top=50`;
+      } else {
+        // We're mid-folder; find the current folder from context (we store it in queue[0] as a sentinel)
+        current = state.queue[0] ?? { folderId: "", folderName: "?", depth: 0 };
+        // Remove the sentinel — it will be re-added if we need to pause mid-folder
+        state.queue.shift();
+      }
+
+      let pausedLink: string | null = null;
+
+      // Scan pages until batch limit or folder exhausted
+      while (nextLink && messagesScanned < BATCH_MSG_LIMIT) {
+        const res = await fetch(nextLink, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) { nextLink = null; break; } // skip bad pages silently
+        const data = (await res.json()) as { value: MailMessage[]; "@odata.nextLink"?: string };
+        const messages = data.value ?? [];
+
+        for (const msg of messages) {
+          messagesScanned++;
+          // Attachments
+          if (msg.hasAttachments) {
+            try {
+              const attData = await graphGet<{ value: MailAttachment[] }>(
+                token,
+                `${mailboxBase}/messages/${msg.id}/attachments?$select=id,name,size,contentType,isInline`
+              );
+              for (const att of attData.value ?? []) {
+                if (!att.isInline && isCvFile(att.name, att.contentType)) {
+                  files.push({
+                    id: `mail-${att.id}`,
+                    name: att.name,
+                    size: att.size,
+                    source: "email",
+                    messageId: msg.id,
+                    attachmentId: att.id,
+                    folderPath: current.folderName,
+                    emailSubject: msg.subject ?? "(no subject)",
+                    sharedMailbox: args.sharedMailbox,
+                  });
+                }
+              }
+            } catch { /* skip */ }
+          }
+          // Body links
+          if (msg.body?.contentType === "html" && msg.body.content) {
+            const bodyLinks = extractCvLinksFromHtml(msg.body.content);
+            for (const link of bodyLinks) {
+              files.push({
+                id: `bodylink-${Buffer.from(link.url).toString("base64").slice(0, 32)}`,
+                name: link.name,
+                size: 0,
+                source: "email",
+                messageId: msg.id,
+                folderPath: current.folderName,
+                emailSubject: msg.subject ?? "(no subject)",
+                bodyLinkUrl: link.url,
+                sharedMailbox: args.sharedMailbox,
+              });
+            }
+          }
+        }
+
+        nextLink = data["@odata.nextLink"] ?? null;
+        if (messagesScanned >= BATCH_MSG_LIMIT && nextLink) {
+          // Pause mid-folder — save where we are
+          pausedLink = nextLink;
+          break;
+        }
+      }
+
+      if (pausedLink) {
+        // Re-insert current folder as sentinel at front so we resume it next call
+        state.queue.unshift({ ...current, folderId: current.folderId });
+        state.currentNextLink = pausedLink;
+        break; // batch limit reached
+      } else {
+        // Folder exhausted — add child folders to queue (if not too deep)
+        state.currentNextLink = null;
+        if (current.depth < 6) {
+          try {
+            const childData = await graphGet<{ value: Array<{ id: string; displayName: string }> }>(
+              token,
+              `${mailboxBase}/mailFolders/${current.folderId}/childFolders?$top=50&$select=id,displayName`
+            );
+            for (const child of childData.value ?? []) {
+              state.queue.push({
+                folderId: child.id,
+                folderName: `${current.folderName}/${child.displayName}`,
+                depth: current.depth + 1,
+              });
+            }
+          } catch { /* skip */ }
+        }
+      }
+    }
+
+    const isDone = state.queue.length === 0 && !state.currentNextLink;
+    return {
+      files,
+      nextCursor: isDone ? null : JSON.stringify(state),
+      messagesScanned,
+    };
   },
 });
 
