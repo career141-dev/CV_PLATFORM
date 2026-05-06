@@ -6,7 +6,18 @@ export default defineSchema({
     tokenIdentifier: v.string(),
     name: v.optional(v.string()),
     email: v.optional(v.string()),
-  }).index("by_token", ["tokenIdentifier"]),
+    role: v.optional(v.union(v.literal("admin"), v.literal("recruiter"), v.literal("viewer"))),
+    isApproved: v.optional(v.boolean()),
+  }).index("by_token", ["tokenIdentifier"])
+    .index("by_email", ["email"]),
+
+  // Pre-approved email list managed by admin
+  approvedEmails: defineTable({
+    email: v.string(),
+    role: v.union(v.literal("admin"), v.literal("recruiter"), v.literal("viewer")),
+    addedBy: v.id("users"),
+    addedAt: v.string(),
+  }).index("by_email", ["email"]),
 
   cvs: defineTable({
     // File storage

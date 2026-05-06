@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Brain, LayoutDashboard, Search, Upload, LogOut, Menu, X, Target, DatabaseZap, Briefcase, Mail } from "lucide-react";
+import { Brain, LayoutDashboard, Search, Upload, LogOut, Menu, X, Target, DatabaseZap, Briefcase, Mail, UserCog } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth.ts";
+import { useRole } from "@/hooks/use-role.ts";
 import { Button } from "@/components/ui/button.tsx";
 import { cn } from "@/lib/utils.ts";
 
-const navItems = [
+const baseNavItems = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard" },
   { icon: Search, label: "Search CVs", href: "/search" },
   { icon: Briefcase, label: "Jobs", href: "/jobs" },
@@ -16,10 +17,17 @@ const navItems = [
   { icon: Mail, label: "Email Import", href: "/email-import" },
 ];
 
+const adminNavItems = [
+  { icon: UserCog, label: "Users", href: "/users" },
+];
+
 export default function AppLayout({ children }: { children: ReactNode }) {
   const { removeUser, user } = useAuth();
+  const role = useRole();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  const navItems = role === "admin" ? [...baseNavItems, ...adminNavItems] : baseNavItems;
 
   return (
     <div className="flex h-screen bg-background">

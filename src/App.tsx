@@ -14,6 +14,9 @@ import WorkableImport from "./pages/workable-import/page.tsx";
 import Jobs from "./pages/jobs/page.tsx";
 
 import EmailImport from "./pages/email-import/page.tsx";
+import UsersPage from "./pages/users/page.tsx";
+import AccessGuard from "./components/access-guard.tsx";
+import { Authenticated } from "convex/react";
 
 export default function App() {
   return (
@@ -21,16 +24,28 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/upload" element={<Upload />} />
-          <Route path="/search" element={<Search />} />
-          <Route path="/jobs" element={<Jobs />} />
-          <Route path="/jd-match" element={<JdMatch />} />
-          <Route path="/workable-import" element={<WorkableImport />} />
-          <Route path="/cv/:cvId" element={<CvProfile />} />
-          <Route path="/email-import" element={<EmailImport />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+          <Route
+            path="/*"
+            element={
+              <Authenticated>
+                <AccessGuard>
+                  <Routes>
+                    <Route path="/dashboard" element={<Dashboard />} />
+                    <Route path="/upload" element={<Upload />} />
+                    <Route path="/search" element={<Search />} />
+                    <Route path="/jobs" element={<Jobs />} />
+                    <Route path="/jd-match" element={<JdMatch />} />
+                    <Route path="/workable-import" element={<WorkableImport />} />
+                    <Route path="/cv/:cvId" element={<CvProfile />} />
+                    <Route path="/email-import" element={<EmailImport />} />
+                    <Route path="/users" element={<UsersPage />} />
+                    <Route path="*" element={<NotFound />} />
+                  </Routes>
+                </AccessGuard>
+              </Authenticated>
+            }
+          />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
