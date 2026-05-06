@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { internalQuery, mutation, query } from "./_generated/server";
 import type { Id, Doc } from "./_generated/dataModel.d.ts";
 import type { GenericQueryCtx, GenericMutationCtx } from "convex/server";
 import type { DataModel } from "./_generated/dataModel.d.ts";
