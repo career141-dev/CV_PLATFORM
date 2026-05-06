@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Search, Upload, Users, Zap, Brain, Filter } from "lucide-react";
 
+const LOGO_URL = "https://hercules-cdn.com/file_TEqHXmSH2IfLvYtI18CmCUnf";
+
 const features = [
   {
     icon: Brain,
@@ -46,10 +48,7 @@ export default function Index() {
       <nav className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <Brain className="w-4 h-4 text-primary-foreground" />
-            </div>
-            <span className="font-bold text-lg">TalentBase</span>
+            <img src={LOGO_URL} alt="Career141" className="h-8 w-auto" />
           </div>
           <div className="flex items-center gap-3">
             <AuthLoading>

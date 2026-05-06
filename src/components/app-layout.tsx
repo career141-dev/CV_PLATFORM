@@ -31,7 +31,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex flex-col w-56 bg-sidebar border-r border-sidebar-border shrink-0">
         <div className="p-4 flex items-center border-b border-sidebar-border">
-          <img src="https://hercules-cdn.com/file_f8BmJ62aM7DCa5uZEscvjRw3" alt="Career141" className="h-8 w-auto" />
+          <img src="https://hercules-cdn.com/file_TEqHXmSH2IfLvYtI18CmCUnf" alt="Career141" className="h-8 w-auto" />
         </div>
 
         <nav className="flex-1 p-3 space-y-1">
