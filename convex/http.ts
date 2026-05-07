@@ -28,7 +28,7 @@ http.route({
     const html = `<!DOCTYPE html><html><body><script>
       try {
         if (window.opener) {
-          window.opener.postMessage({ type: "ms_oauth_callback", payload: ${payload} }, "${appOrigin}");
+          window.opener.postMessage({ type: "ms_oauth_callback", payload: ${payload} }, "*");
         }
       } catch(e) {}
       window.close();
