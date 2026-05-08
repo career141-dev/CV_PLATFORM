@@ -555,16 +555,23 @@ function CreateJobDialog({ open, onClose, onCreated }: {
   const [industry, setIndustry] = useState("");
   const [seniority, setSeniority] = useState("");
   const [location, setLocation] = useState("");
+  const [keywordsInput, setKeywordsInput] = useState("");
+  const [disqualifyThreshold, setDisqualifyThreshold] = useState("40");
   const [saving, setSaving] = useState(false);
 
   const handleCreate = async () => {
     if (!title.trim() || !description.trim()) { toast.error("Title and description are required"); return; }
     setSaving(true);
     try {
+      const keywords = keywordsInput.trim()
+        ? keywordsInput.split(",").map(k => k.trim()).filter(Boolean)
+        : undefined;
       const jobId = await createJob({
         title: title.trim(), description: description.trim(),
         industry: industry || undefined, seniority: seniority || undefined,
         location: location.trim() || undefined,
+        keywords,
+        disqualifyThreshold: disqualifyThreshold ? parseInt(disqualifyThreshold, 10) : undefined,
       });
       onClose();
       setTitle(""); setDescription(""); setIndustry(""); setSeniority(""); setLocation("");
@@ -620,6 +627,16 @@ function CreateJobDialog({ open, onClose, onCreated }: {
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Location</label>
             <Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Cairo, Egypt" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">WhatsApp Keywords <span className="text-muted-foreground font-normal">(comma-separated)</span></label>
+            <Input value={keywordsInput} onChange={(e) => setKeywordsInput(e.target.value)} placeholder="e.g. sales manager, BDM, business development" />
+            <p className="text-xs text-muted-foreground mt-1">Applicants who mention these words will be matched to this job.</p>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Disqualification Threshold <span className="text-muted-foreground font-normal">(score 0–100, default 40)</span></label>
+            <Input type="number" min="0" max="100" value={disqualifyThreshold} onChange={(e) => setDisqualifyThreshold(e.target.value)} placeholder="40" className="w-24" />
+            <p className="text-xs text-muted-foreground mt-1">WhatsApp applicants scoring below this will be auto-rejected.</p>
           </div>
         </div>
         <DialogFooter>

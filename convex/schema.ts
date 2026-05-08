@@ -149,6 +149,10 @@ export default defineSchema({
     seniority: v.optional(v.string()),
     location: v.optional(v.string()),
     createdBy: v.id("users"),
+    // Keywords used to match WhatsApp applicant messages to this job
+    keywords: v.optional(v.array(v.string())),
+    // Disqualification score threshold (0-100), default 40
+    disqualifyThreshold: v.optional(v.number()),
     // Latest match results snapshot (stored after each run)
     lastMatchedAt: v.optional(v.string()),
     matchResults: v.optional(v.array(v.object({
@@ -216,6 +220,29 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_email", ["email"]),
+
+  // WhatsApp inbound applications
+  whatsappApplications: defineTable({
+    waId: v.string(),           // WhatsApp message ID (deduplication)
+    from: v.string(),           // Sender phone number
+    jobId: v.optional(v.id("jobs")),
+    cvId: v.optional(v.id("cvs")),
+    score: v.optional(v.number()),
+    status: v.union(
+      v.literal("received"),     // Message received, processing
+      v.literal("no_cv"),        // No CV attachment found
+      v.literal("no_job_match"), // Could not match to a job
+      v.literal("scored"),       // CV scored
+      v.literal("disqualified"), // Below threshold
+      v.literal("error")
+    ),
+    messageText: v.optional(v.string()),
+    errorMessage: v.optional(v.string()),
+    receivedAt: v.string(),
+  })
+    .index("by_wa_id", ["waId"])
+    .index("by_from", ["from"])
+    .index("by_job", ["jobId"]),
 
   workableImports: defineTable({
     status: v.union(v.literal("running"), v.literal("done"), v.literal("error"), v.literal("stopped")),

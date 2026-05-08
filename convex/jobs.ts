@@ -48,6 +48,8 @@ export const createJob = mutation({
     industry: v.optional(v.string()),
     seniority: v.optional(v.string()),
     location: v.optional(v.string()),
+    keywords: v.optional(v.array(v.string())),
+    disqualifyThreshold: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await getAuthUser(ctx);
@@ -57,6 +59,8 @@ export const createJob = mutation({
       industry: args.industry,
       seniority: args.seniority,
       location: args.location,
+      keywords: args.keywords,
+      disqualifyThreshold: args.disqualifyThreshold,
       createdBy: user._id,
     });
   },

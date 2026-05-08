@@ -1,6 +1,7 @@
-// V8 runtime — HTTP Actions (OAuth callback)
+// V8 runtime — HTTP Actions (OAuth callback + WhatsApp webhook)
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
+import { internal } from "./_generated/api";
 
 const http = httpRouter();
 
@@ -38,6 +39,81 @@ http.route({
       status: 200,
       headers: { "Content-Type": "text/html" },
     });
+  }),
+});
+
+// ─── WhatsApp webhook ─────────────────────────────────────────────────────────
+
+// GET: Meta verification challenge
+http.route({
+  path: "/whatsapp/webhook",
+  method: "GET",
+  handler: httpAction(async (_ctx, request) => {
+    const url = new URL(request.url);
+    const mode = url.searchParams.get("hub.mode");
+    const token = url.searchParams.get("hub.verify_token");
+    const challenge = url.searchParams.get("hub.challenge");
+    const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN ?? "";
+
+    if (mode === "subscribe" && token === verifyToken) {
+      return new Response(challenge ?? "", { status: 200 });
+    }
+    return new Response("Forbidden", { status: 403 });
+  }),
+});
+
+// POST: Incoming messages
+http.route({
+  path: "/whatsapp/webhook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json() as Record<string, unknown>;
+
+    try {
+      const entry = (body.entry as Array<Record<string, unknown>>)?.[0];
+      const change = (entry?.changes as Array<Record<string, unknown>>)?.[0];
+      const value = change?.value as Record<string, unknown> | undefined;
+      const messages = value?.messages as Array<Record<string, unknown>> | undefined;
+
+      if (!messages || messages.length === 0) {
+        return new Response("ok", { status: 200 });
+      }
+
+      for (const msg of messages) {
+        const waId = msg.id as string;
+        const from = msg.from as string;
+        const msgType = msg.type as string;
+        const textBody = (msg.text as Record<string, unknown> | undefined)?.body as string | undefined;
+
+        let mediaId: string | undefined;
+        let fileName: string | undefined;
+        let mimeType: string | undefined;
+
+        if (msgType === "document") {
+          const doc = msg.document as Record<string, unknown>;
+          mediaId = doc?.id as string;
+          fileName = doc?.filename as string | undefined;
+          mimeType = doc?.mime_type as string | undefined;
+        } else if (msgType === "image") {
+          const img = msg.image as Record<string, unknown>;
+          mediaId = img?.id as string;
+          mimeType = img?.mime_type as string | undefined;
+        }
+
+        // Only process if there's a document or we can still try (text-only prompts handled inside)
+        await ctx.runAction(internal.whatsapp.process.processIncomingMessage, {
+          waId,
+          from,
+          messageText: textBody ?? "",
+          mediaId,
+          fileName,
+          mimeType,
+        });
+      }
+    } catch { /* silently ignore malformed payloads */ }
+
+    // Always return 200 so Meta doesn't retry
+    return new Response("ok", { status: 200 });
   }),
 });
 

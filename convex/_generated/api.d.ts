@@ -20,6 +20,8 @@ import type * as m365_scanMutations from "../m365/scanMutations.js";
 import type * as pipeline from "../pipeline.js";
 import type * as searchHistory from "../searchHistory.js";
 import type * as users from "../users.js";
+import type * as whatsapp_mutations from "../whatsapp/mutations.js";
+import type * as whatsapp_process from "../whatsapp/process.js";
 import type * as workable_actions from "../workable/actions.js";
 import type * as workable_cleanup from "../workable/cleanup.js";
 import type * as workable_cleanupAction from "../workable/cleanupAction.js";
@@ -44,6 +46,8 @@ declare const fullApi: ApiFromModules<{
   pipeline: typeof pipeline;
   searchHistory: typeof searchHistory;
   users: typeof users;
+  "whatsapp/mutations": typeof whatsapp_mutations;
+  "whatsapp/process": typeof whatsapp_process;
   "workable/actions": typeof workable_actions;
   "workable/cleanup": typeof workable_cleanup;
   "workable/cleanupAction": typeof workable_cleanupAction;
