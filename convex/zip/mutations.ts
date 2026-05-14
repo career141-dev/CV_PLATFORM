@@ -2,7 +2,74 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query } from "../_generated/server";
 import { ConvexError } from "convex/values";
+import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel.d.ts";
+
+// ─── Browser-side upload helpers ─────────────────────────────────────────────
+
+/**
+ * Called from the browser after uploading a file to Convex storage.
+ * Creates the CV record and schedules background text extraction.
+ */
+export const createCvFromBrowser = mutation({
+  args: {
+    storageId: v.id("_storage"),
+    fileName: v.string(),
+    fileType: v.string(),
+    fileSize: v.number(),
+    fileHash: v.string(),
+  },
+  handler: async (ctx, args): Promise<Id<"cvs">> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_token", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
+      .unique();
+    if (!user) throw new ConvexError({ message: "User not found", code: "NOT_FOUND" });
+
+    // Update stats
+    const stats = await ctx.db.query("cvStats").first();
+    if (stats) {
+      await ctx.db.patch(stats._id, { total: (stats.total ?? 0) + 1 });
+    }
+
+    const cvId = await ctx.db.insert("cvs", {
+      storageId: args.storageId,
+      fileName: args.fileName,
+      fileType: args.fileType,
+      fileSize: args.fileSize,
+      status: "uploading",
+      uploadedBy: user._id,
+      fileHash: args.fileHash,
+    });
+
+    // Schedule background text extraction with a small random delay to avoid bursts
+    const delayMs = Math.floor(Math.random() * 5000);
+    await ctx.scheduler.runAfter(delayMs, api.cvProcessing.extractTextOnly, {
+      cvId,
+      storageId: args.storageId,
+      fileType: args.fileType,
+    });
+
+    return cvId;
+  },
+});
+
+/**
+ * Returns true if a CV with this hash already exists (duplicate check).
+ */
+export const checkDuplicate = mutation({
+  args: { fileHash: v.string() },
+  handler: async (ctx, args): Promise<boolean> => {
+    const existing = await ctx.db
+      .query("cvs")
+      .withIndex("by_file_hash", (q) => q.eq("fileHash", args.fileHash))
+      .first();
+    return existing !== null;
+  },
+});
 
 // ─── Create a new ZIP import job ──────────────────────────────────────────────
 

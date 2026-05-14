@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useMutation, useQuery, useAction } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import type { Id } from "@/convex/_generated/dataModel.d.ts";
 import { Button } from "@/components/ui/button";
@@ -10,29 +10,61 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { PlusIcon, TrashIcon, PlayIcon, PauseIcon, StopCircleIcon, CheckCircleIcon, RefreshCwIcon } from "lucide-react";
+import JSZip from "jszip";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type Phase = "setup" | "importing" | "done";
+
+const CV_EXTENSIONS = [".pdf", ".doc", ".docx"];
+
+function isCvExtension(name: string): boolean {
+  const lower = name.toLowerCase();
+  return CV_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+function getFileType(name: string): "pdf" | "docx" | "doc" {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".docx")) return "docx";
+  if (lower.endsWith(".doc")) return "doc";
+  return "pdf";
+}
+
+function getMimeType(fileType: string): string {
+  if (fileType === "pdf") return "application/pdf";
+  if (fileType === "docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  return "application/msword";
+}
+
+async function computeHash(buffer: ArrayBuffer): Promise<string> {
+  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ZipImportPage() {
   const [urls, setUrls] = useState<string[]>(["", "", ""]);
   const [phase, setPhase] = useState<Phase>("setup");
   const [jobId, setJobId] = useState<Id<"zipImportJobs"> | null>(null);
   const [isPausing, setIsPausing] = useState(false);
-  // Per-ZIP progress label
-  const [currentZipLabel, setCurrentZipLabel] = useState("");
+  const [statusLabel, setStatusLabel] = useState("");
 
   const createJob = useMutation(api.zip.mutations.createJob);
   const setStatus = useMutation(api.zip.mutations.setStatus);
-  const updateProgress = useMutation(api.zip.mutations.updateProgressPublic);
-  const processZipUrl = useAction(api.zip.process.processZipUrl);
+  const updateProgressPublic = useMutation(api.zip.mutations.updateProgressPublic);
+  const generateUploadUrl = useMutation(api.cvs.generateUploadUrl);
+  const createCvRecord = useMutation(api.zip.mutations.createCvFromBrowser);
+  const findByHash = useMutation(api.zip.mutations.checkDuplicate);
 
   const job = useQuery(api.zip.mutations.getJob, jobId ? { jobId } : "skip");
   const jobs = useQuery(api.zip.mutations.listJobs, {});
+  const identity = useQuery(api.users.getCurrentUser, {});
 
   const shouldStopRef = useRef(false);
-  const isLoopRunningRef = useRef(false);
-
-  const identity = useQuery(api.users.getCurrentUser, {});
+  const isRunningRef = useRef(false);
 
   // Resume any active job on mount
   useEffect(() => {
@@ -49,135 +81,161 @@ export default function ZipImportPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobs]);
 
-  // ─── Main loop: iterate ZIP URLs one by one ─────────────────────────────────
+  // ─── Main browser-side import loop ──────────────────────────────────────────
 
-  async function runImportLoop(jId: Id<"zipImportJobs">, zipUrls: string[], startUrlIndex: number, tokenIdentifier: string) {
-    if (isLoopRunningRef.current) return;
-    isLoopRunningRef.current = true;
+  async function runImport(
+    jId: Id<"zipImportJobs">,
+    zipUrls: string[],
+    startUrlIdx: number,
+    startFileIdx: number,
+    initialCounters: { imported: number; duplicates: number; notCv: number; errors: number; totalFound: number }
+  ) {
+    if (isRunningRef.current) return;
+    isRunningRef.current = true;
     shouldStopRef.current = false;
 
-    let totalImported = 0;
-    let totalDuplicates = 0;
-    let totalNotCv = 0;
-    let totalErrors = 0;
-    let totalFound = 0;
-
-    // Load existing counters from DB if resuming
-    const currentJob = await (async () => {
-      // We don't have a direct one-off query here, so use the reactive job state
-      return null;
-    })();
-    void currentJob;
+    let { imported, duplicates, notCv, errors, totalFound } = initialCounters;
 
     try {
-      for (let i = startUrlIndex; i < zipUrls.length; i++) {
+      for (let urlIdx = startUrlIdx; urlIdx < zipUrls.length; urlIdx++) {
         if (shouldStopRef.current) break;
 
-        setCurrentZipLabel(`Processing ZIP ${i + 1} of ${zipUrls.length}…`);
+        const url = zipUrls[urlIdx];
+        setStatusLabel(`Downloading ZIP ${urlIdx + 1} of ${zipUrls.length}…`);
 
-        // Update DB: mark which URL we're on
-        await updateProgress({
-          jobId: jId,
-          currentUrlIndex: i,
-          currentFileIndex: 0,
-          totalFound,
-          imported: totalImported,
-          duplicates: totalDuplicates,
-          notCv: totalNotCv,
-          errors: totalErrors,
-          status: "running",
-        });
-
+        // ── Download ZIP in browser ──
+        let zipData: JSZip;
         try {
-          const result = await processZipUrl({
-            jobId: jId,
-            url: zipUrls[i],
-            urlIndex: i,
-            tokenIdentifier,
-          });
-
-          totalImported += result.imported;
-          totalDuplicates += result.duplicates;
-          totalNotCv += result.notCv;
-          totalErrors += result.errors;
-          totalFound += result.totalFound;
-
-          // Save progress after each ZIP
-          await updateProgress({
-            jobId: jId,
-            currentUrlIndex: i + 1,
-            currentFileIndex: 0,
-            totalFound,
-            imported: totalImported,
-            duplicates: totalDuplicates,
-            notCv: totalNotCv,
-            errors: totalErrors,
-            status: "running",
-          });
-
-          toast.success(`ZIP ${i + 1} done — ${result.imported.toLocaleString()} CVs stored`);
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const buf = await res.arrayBuffer();
+          setStatusLabel(`Scanning ZIP ${urlIdx + 1} of ${zipUrls.length}…`);
+          zipData = await JSZip.loadAsync(buf);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          toast.error(`ZIP ${i + 1} failed: ${msg}`);
-          totalErrors++;
-          // Continue to next ZIP even if one fails
+          toast.error(`Failed to download ZIP ${urlIdx + 1}: ${msg}`);
+          errors++;
+          await updateProgressPublic({ jobId: jId, currentUrlIndex: urlIdx + 1, currentFileIndex: 0, totalFound, imported, duplicates, notCv, errors, status: "running" });
+          continue;
+        }
+
+        // ── Collect CV files ──
+        const allEntries = Object.values(zipData.files).filter((f) => !f.dir);
+        const cvFiles = allEntries.filter((f) => isCvExtension(f.name));
+        const nonCvCount = allEntries.length - cvFiles.length;
+        notCv += nonCvCount;
+        totalFound += cvFiles.length;
+
+        // ── Process files one by one, starting at cursor ──
+        const fileStartIdx = urlIdx === startUrlIdx ? startFileIdx : 0;
+
+        for (let fileIdx = fileStartIdx; fileIdx < cvFiles.length; fileIdx++) {
+          if (shouldStopRef.current) break;
+
+          const entry = cvFiles[fileIdx];
+          const fileName = entry.name.split("/").pop() ?? entry.name;
+          setStatusLabel(`ZIP ${urlIdx + 1}/${zipUrls.length} — file ${fileIdx + 1} of ${cvFiles.length}: ${fileName}`);
+
+          try {
+            const buffer = await entry.async("arraybuffer");
+            const fileType = getFileType(fileName);
+            const fileHash = await computeHash(buffer);
+
+            // Check duplicate
+            const isDuplicate = await findByHash({ fileHash });
+            if (isDuplicate) {
+              duplicates++;
+            } else {
+              // Get upload URL from Convex
+              const uploadUrl = await generateUploadUrl();
+
+              // Upload file to Convex storage
+              const uploadRes = await fetch(uploadUrl, {
+                method: "POST",
+                headers: { "Content-Type": getMimeType(fileType) },
+                body: buffer,
+              });
+              if (!uploadRes.ok) throw new Error(`Upload failed: HTTP ${uploadRes.status}`);
+              const { storageId } = await uploadRes.json() as { storageId: Id<"_storage"> };
+
+              // Create CV record in DB
+              await createCvRecord({
+                storageId,
+                fileName,
+                fileType,
+                fileSize: buffer.byteLength,
+                fileHash,
+              });
+
+              imported++;
+            }
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.error(`Error processing ${fileName}:`, msg);
+            errors++;
+          }
+
+          // Save cursor every 10 files
+          if (fileIdx % 10 === 0) {
+            await updateProgressPublic({
+              jobId: jId,
+              currentUrlIndex: urlIdx,
+              currentFileIndex: fileIdx,
+              totalFound,
+              imported,
+              duplicates,
+              notCv,
+              errors,
+              status: "running",
+            });
+          }
+        }
+
+        if (!shouldStopRef.current) {
+          // Mark this ZIP done, move to next
+          await updateProgressPublic({
+            jobId: jId,
+            currentUrlIndex: urlIdx + 1,
+            currentFileIndex: 0,
+            totalFound,
+            imported,
+            duplicates,
+            notCv,
+            errors,
+            status: "running",
+          });
+          toast.success(`ZIP ${urlIdx + 1} complete — ${imported.toLocaleString()} CVs imported so far`);
         }
       }
 
       if (!shouldStopRef.current) {
-        // All ZIPs done
-        await updateProgress({
-          jobId: jId,
-          currentUrlIndex: zipUrls.length,
-          currentFileIndex: 0,
-          totalFound,
-          imported: totalImported,
-          duplicates: totalDuplicates,
-          notCv: totalNotCv,
-          errors: totalErrors,
-          status: "done",
-        });
+        await updateProgressPublic({ jobId: jId, currentUrlIndex: zipUrls.length, currentFileIndex: 0, totalFound, imported, duplicates, notCv, errors, status: "done" });
         setPhase("done");
-        toast.success(`All ZIPs imported! ${totalImported.toLocaleString()} CVs added.`);
+        toast.success(`All done! ${imported.toLocaleString()} CVs imported.`);
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      toast.error(`Import failed: ${msg}`);
-      await updateProgress({
-        jobId: jId,
-        currentUrlIndex: startUrlIndex,
-        currentFileIndex: 0,
-        totalFound,
-        imported: totalImported,
-        duplicates: totalDuplicates,
-        notCv: totalNotCv,
-        errors: totalErrors,
-        status: "error",
-        errorMessage: msg,
-      });
+      toast.error(`Import error: ${msg}`);
+      await updateProgressPublic({ jobId: jId, currentUrlIndex: startUrlIdx, currentFileIndex: 0, totalFound, imported, duplicates, notCv, errors, status: "error", errorMessage: msg });
     } finally {
-      isLoopRunningRef.current = false;
+      isRunningRef.current = false;
       setIsPausing(false);
     }
   }
 
-  // ─── Handlers ───────────────────────────────────────────────────────────────
+  // ─── Handlers ────────────────────────────────────────────────────────────────
 
   async function handleStart() {
     const validUrls = urls.filter((u) => u.trim().length > 0);
-    if (validUrls.length === 0) {
-      toast.error("Please enter at least one ZIP URL");
-      return;
-    }
-    const tokenId = identity?.tokenIdentifier;
-    if (!tokenId) { toast.error("Not authenticated"); return; }
+    if (validUrls.length === 0) { toast.error("Please enter at least one ZIP URL"); return; }
+    if (!identity) { toast.error("Not authenticated"); return; }
     try {
       const jId = await createJob({ urls: validUrls });
       setJobId(jId);
       setPhase("importing");
-      runImportLoop(jId, validUrls, 0, tokenId);
+      runImport(jId, validUrls, 0, 0, { imported: 0, duplicates: 0, notCv: 0, errors: 0, totalFound: 0 });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to start import");
+      toast.error(e instanceof Error ? e.message : "Failed to start");
     }
   }
 
@@ -186,15 +244,20 @@ export default function ZipImportPage() {
     setIsPausing(true);
     shouldStopRef.current = true;
     await setStatus({ jobId, status: "paused" });
-    toast.info("Import paused — you can resume anytime");
+    toast.info("Import paused — resume anytime, even from another browser session");
   }
 
   async function handleResume() {
     if (!jobId || !job) return;
-    const tokenId = identity?.tokenIdentifier;
-    if (!tokenId) { toast.error("Not authenticated"); return; }
+    if (!identity) { toast.error("Not authenticated"); return; }
     await setStatus({ jobId, status: "running" });
-    runImportLoop(jobId, job.urls, job.currentUrlIndex, tokenId);
+    runImport(jobId, job.urls, job.currentUrlIndex, job.currentFileIndex, {
+      imported: job.imported,
+      duplicates: job.duplicates,
+      notCv: job.notCv,
+      errors: job.errors,
+      totalFound: job.totalFound,
+    });
     toast.info("Import resumed");
   }
 
@@ -209,22 +272,17 @@ export default function ZipImportPage() {
     setJobId(null);
     setPhase("setup");
     setUrls(["", "", ""]);
+    setStatusLabel("");
   }
 
-  // ─── URL helpers ─────────────────────────────────────────────────────────────
-
-  function setUrl(index: number, value: string) {
-    setUrls((prev) => prev.map((u, i) => (i === index ? value : u)));
-  }
+  function setUrl(i: number, v: string) { setUrls((prev) => prev.map((u, idx) => (idx === i ? v : u))); }
   function addUrl() { setUrls((prev) => [...prev, ""]); }
-  function removeUrl(index: number) { setUrls((prev) => prev.filter((_, i) => i !== index)); }
+  function removeUrl(i: number) { setUrls((prev) => prev.filter((_, idx) => idx !== i)); }
 
   // ─── Progress ─────────────────────────────────────────────────────────────────
 
-  const processedCount = job ? (job.imported + job.duplicates + job.notCv + job.errors) : 0;
-  const progressPct = job && job.totalFound > 0
-    ? Math.min(100, Math.round((processedCount / job.totalFound) * 100))
-    : 0;
+  const processed = job ? job.imported + job.duplicates + job.notCv + job.errors : 0;
+  const progressPct = job && job.totalFound > 0 ? Math.min(100, Math.round((processed / job.totalFound) * 100)) : 0;
 
   // ─── Render ───────────────────────────────────────────────────────────────────
 
@@ -285,13 +343,13 @@ export default function ZipImportPage() {
                 {job.status.charAt(0).toUpperCase() + job.status.slice(1)}
               </Badge>
             </div>
-            <CardDescription>{currentZipLabel || `Processing ZIP ${Math.min(job.currentUrlIndex + 1, job.urls.length)} of ${job.urls.length}`}</CardDescription>
+            {statusLabel && <CardDescription className="truncate">{statusLabel}</CardDescription>}
           </CardHeader>
           <CardContent className="space-y-5">
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Files processed</span>
-                <span>{processedCount.toLocaleString()} / {job.totalFound.toLocaleString()}</span>
+                <span>{processed.toLocaleString()} / {job.totalFound.toLocaleString()}</span>
               </div>
               <Progress value={progressPct} className="h-2" />
             </div>
@@ -310,8 +368,7 @@ export default function ZipImportPage() {
             <div className="flex gap-2 flex-wrap">
               {job.status === "running" && (
                 <Button variant="secondary" onClick={handlePause} disabled={isPausing} className="cursor-pointer">
-                  <PauseIcon className="w-4 h-4 mr-2" />
-                  {isPausing ? "Pausing…" : "Pause"}
+                  <PauseIcon className="w-4 h-4 mr-2" /> {isPausing ? "Pausing…" : "Pause"}
                 </Button>
               )}
               {job.status === "paused" && (
@@ -335,7 +392,7 @@ export default function ZipImportPage() {
       )}
 
       {/* Done */}
-      {(phase === "done" || (job?.status === "done")) && job && (
+      {(phase === "done" || job?.status === "done") && job && (
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
@@ -351,7 +408,7 @@ export default function ZipImportPage() {
               <StatCard label="Errors" value={job.errors} color="text-destructive" />
             </div>
             <p className="text-sm text-muted-foreground">
-              CVs are being processed in the background — they will appear in the database as they complete.
+              CVs are being processed in the background — they will appear searchable as they complete.
             </p>
             <Button onClick={handleNewImport} className="cursor-pointer w-full">
               <RefreshCwIcon className="w-4 h-4 mr-2" /> Start Another Import
