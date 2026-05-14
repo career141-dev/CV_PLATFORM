@@ -59,6 +59,45 @@ export const setStatus = mutation({
   },
 });
 
+// ─── Public: update progress (called from frontend during import loop) ────────
+
+export const updateProgressPublic = mutation({
+  args: {
+    jobId: v.id("zipImportJobs"),
+    currentUrlIndex: v.number(),
+    currentFileIndex: v.number(),
+    totalFound: v.number(),
+    imported: v.number(),
+    duplicates: v.number(),
+    notCv: v.number(),
+    errors: v.number(),
+    status: v.union(
+      v.literal("running"),
+      v.literal("paused"),
+      v.literal("done"),
+      v.literal("error"),
+      v.literal("stopped")
+    ),
+    errorMessage: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new ConvexError({ message: "Not authenticated", code: "UNAUTHENTICATED" });
+    await ctx.db.patch(args.jobId, {
+      currentUrlIndex: args.currentUrlIndex,
+      currentFileIndex: args.currentFileIndex,
+      totalFound: args.totalFound,
+      imported: args.imported,
+      duplicates: args.duplicates,
+      notCv: args.notCv,
+      errors: args.errors,
+      status: args.status,
+      updatedAt: new Date().toISOString(),
+      errorMessage: args.errorMessage,
+    });
+  },
+});
+
 // ─── Internal: update cursor + counters after each batch ─────────────────────
 
 export const updateProgress = internalMutation({
