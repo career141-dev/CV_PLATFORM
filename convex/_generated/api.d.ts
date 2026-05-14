@@ -26,6 +26,8 @@ import type * as workable_actions from "../workable/actions.js";
 import type * as workable_cleanup from "../workable/cleanup.js";
 import type * as workable_cleanupAction from "../workable/cleanupAction.js";
 import type * as workable_db from "../workable/db.js";
+import type * as zip_mutations from "../zip/mutations.js";
+import type * as zip_process from "../zip/process.js";
 
 import type {
   ApiFromModules,
@@ -52,6 +54,8 @@ declare const fullApi: ApiFromModules<{
   "workable/cleanup": typeof workable_cleanup;
   "workable/cleanupAction": typeof workable_cleanupAction;
   "workable/db": typeof workable_db;
+  "zip/mutations": typeof zip_mutations;
+  "zip/process": typeof zip_process;
 }>;
 
 /**

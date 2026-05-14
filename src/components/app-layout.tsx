@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, Search, Upload, LogOut, Menu, X, Target, DatabaseZap, Briefcase, Mail, UserCog } from "lucide-react";
+import { LayoutDashboard, Search, Upload, LogOut, Menu, X, Target, DatabaseZap, Briefcase, Mail, UserCog, FileArchive } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth.ts";
 import { useRole } from "@/hooks/use-role.ts";
 import { Button } from "@/components/ui/button.tsx";
@@ -15,6 +15,7 @@ const baseNavItems = [
   { icon: Upload, label: "Upload CVs", href: "/upload", roles: ["admin", "recruiter"] },
   { icon: DatabaseZap, label: "Workable Import", href: "/workable-import", roles: ["admin"] },
   { icon: Mail, label: "Email Import", href: "/email-import", roles: ["admin"] },
+  { icon: FileArchive, label: "ZIP Import", href: "/zip-import", roles: ["admin"] },
   { icon: UserCog, label: "Users", href: "/users", roles: ["admin"] },
 ];
 

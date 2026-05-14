@@ -14,6 +14,7 @@ import WorkableImport from "./pages/workable-import/page.tsx";
 import Jobs from "./pages/jobs/page.tsx";
 
 import EmailImport from "./pages/email-import/page.tsx";
+import ZipImport from "./pages/zip-import/page.tsx";
 import UsersPage from "./pages/users/page.tsx";
 import AccessGuard from "./components/access-guard.tsx";
 import { Authenticated } from "convex/react";
@@ -39,6 +40,7 @@ export default function App() {
                     <Route path="/workable-import" element={<WorkableImport />} />
                     <Route path="/cv/:cvId" element={<CvProfile />} />
                     <Route path="/email-import" element={<EmailImport />} />
+                    <Route path="/zip-import" element={<ZipImport />} />
                     <Route path="/users" element={<UsersPage />} />
                     <Route path="*" element={<NotFound />} />
                   </Routes>

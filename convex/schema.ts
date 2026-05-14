@@ -244,6 +244,33 @@ export default defineSchema({
     .index("by_from", ["from"])
     .index("by_job", ["jobId"]),
 
+  // ZIP bulk import jobs — cursor-based, pauseable
+  zipImportJobs: defineTable({
+    userId: v.id("users"),
+    // The pre-signed ZIP URLs to process
+    urls: v.array(v.string()),
+    // Which URL we are currently on (0-based)
+    currentUrlIndex: v.number(),
+    // Opaque cursor inside the current ZIP (file index)
+    currentFileIndex: v.number(),
+    status: v.union(
+      v.literal("running"),
+      v.literal("paused"),
+      v.literal("done"),
+      v.literal("error"),
+      v.literal("stopped")
+    ),
+    // Running counters
+    totalFound: v.number(),
+    imported: v.number(),
+    duplicates: v.number(),
+    notCv: v.number(),
+    errors: v.number(),
+    startedAt: v.string(),
+    updatedAt: v.string(),
+    errorMessage: v.optional(v.string()),
+  }).index("by_user", ["userId"]),
+
   workableImports: defineTable({
     status: v.union(v.literal("running"), v.literal("done"), v.literal("error"), v.literal("stopped")),
     totalCandidates: v.number(),
