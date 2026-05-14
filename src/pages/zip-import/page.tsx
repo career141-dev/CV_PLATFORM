@@ -43,6 +43,13 @@ async function computeHash(buffer: ArrayBuffer): Promise<string> {
     .join("");
 }
 
+function getProxyUrl(zipUrl: string): string {
+  // Route ZIP downloads through our Convex HTTP proxy to bypass CORS
+  const convexUrl = import.meta.env.VITE_CONVEX_URL as string ?? "";
+  const siteUrl = convexUrl.replace(".convex.cloud", ".convex.site");
+  return `${siteUrl}/zip-proxy?url=${encodeURIComponent(zipUrl)}`;
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ZipImportPage() {
@@ -106,7 +113,7 @@ export default function ZipImportPage() {
         // ── Download ZIP in browser ──
         let zipData: JSZip;
         try {
-          const res = await fetch(url);
+          const res = await fetch(getProxyUrl(url));
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const buf = await res.arrayBuffer();
           setStatusLabel(`Scanning ZIP ${urlIdx + 1} of ${zipUrls.length}…`);

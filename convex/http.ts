@@ -117,4 +117,60 @@ http.route({
   }),
 });
 
+// ─── ZIP proxy — streams a remote ZIP URL back to the browser to bypass CORS ──
+
+http.route({
+  path: "/zip-proxy",
+  method: "GET",
+  handler: httpAction(async (_ctx, request) => {
+    const url = new URL(request.url);
+    const target = url.searchParams.get("url");
+
+    if (!target) {
+      return new Response("Missing url parameter", { status: 400 });
+    }
+
+    // Only allow S3 / known storage hosts to prevent open-redirect abuse
+    let targetUrl: URL;
+    try {
+      targetUrl = new URL(target);
+    } catch {
+      return new Response("Invalid url", { status: 400 });
+    }
+
+    const allowedHosts = [
+      "s3.amazonaws.com",
+      "s3.eu-west-1.amazonaws.com",
+      "s3.us-east-1.amazonaws.com",
+      "workable-export.s3.amazonaws.com",
+      "storage.googleapis.com",
+    ];
+    const hostAllowed = allowedHosts.some(
+      (h) => targetUrl.hostname === h || targetUrl.hostname.endsWith("." + h) || targetUrl.hostname.endsWith(".amazonaws.com")
+    );
+    if (!hostAllowed) {
+      return new Response("Host not allowed", { status: 403 });
+    }
+
+    try {
+      const upstream = await fetch(target);
+      if (!upstream.ok) {
+        return new Response(`Upstream error: ${upstream.status}`, { status: upstream.status });
+      }
+      const data = await upstream.arrayBuffer();
+      return new Response(data, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/zip",
+          "Access-Control-Allow-Origin": "*",
+          "Content-Length": String(data.byteLength),
+        },
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return new Response(`Proxy error: ${msg}`, { status: 502 });
+    }
+  }),
+});
+
 export default http;
