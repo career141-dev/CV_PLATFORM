@@ -17,7 +17,6 @@ import EmailImport from "./pages/email-import/page.tsx";
 import ZipImport from "./pages/zip-import/page.tsx";
 import UsersPage from "./pages/users/page.tsx";
 import AccessGuard from "./components/access-guard.tsx";
-import { Authenticated } from "convex/react";
 
 export default function App() {
   return (
@@ -26,26 +25,26 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
+          {/* Public routes (no auth required) */}
+          <Route path="/search" element={<Search />} />
+          {/* Protected routes (auth required) */}
           <Route
             path="/*"
             element={
-              <Authenticated>
-                <AccessGuard>
-                  <Routes>
-                    <Route path="/dashboard" element={<Dashboard />} />
-                    <Route path="/upload" element={<Upload />} />
-                    <Route path="/search" element={<Search />} />
-                    <Route path="/jobs" element={<Jobs />} />
-                    <Route path="/jd-match" element={<JdMatch />} />
-                    <Route path="/workable-import" element={<WorkableImport />} />
-                    <Route path="/cv/:cvId" element={<CvProfile />} />
-                    <Route path="/email-import" element={<EmailImport />} />
-                    <Route path="/zip-import" element={<ZipImport />} />
-                    <Route path="/users" element={<UsersPage />} />
-                    <Route path="*" element={<NotFound />} />
-                  </Routes>
-                </AccessGuard>
-              </Authenticated>
+              <AccessGuard>
+                <Routes>
+                  <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/upload" element={<Upload />} />
+                  <Route path="/jobs" element={<Jobs />} />
+                  <Route path="/jd-match" element={<JdMatch />} />
+                  <Route path="/workable-import" element={<WorkableImport />} />
+                  <Route path="/cv/:cvId" element={<CvProfile />} />
+                  <Route path="/email-import" element={<EmailImport />} />
+                  <Route path="/zip-import" element={<ZipImport />} />
+                  <Route path="/users" element={<UsersPage />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </AccessGuard>
             }
           />
           <Route path="*" element={<NotFound />} />

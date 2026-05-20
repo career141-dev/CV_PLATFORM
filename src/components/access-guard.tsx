@@ -5,7 +5,8 @@ import { useCurrentUser } from "@/hooks/use-role.ts";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import AccessDenied from "@/pages/access-denied/page.tsx";
 
-// Wraps the entire authenticated app — blocks unapproved users and auto-signs out revoked users
+// Wraps authenticated routes — allows access for approved users, but unapproved users see error
+// Anonymous users (not logged in) are allowed to view but may see limited content
 export default function AccessGuard({ children }: { children: ReactNode }) {
   const { removeUser, user: authUser } = useAuth();
   const currentUser = useCurrentUser();
@@ -14,7 +15,7 @@ export default function AccessGuard({ children }: { children: ReactNode }) {
     removeUser();
   }, [removeUser]);
 
-  // Not signed in — let auth handle it
+  // Not signed in — allow access (they may see limited content)
   if (!authUser) return <>{children}</>;
 
   // Loading user record

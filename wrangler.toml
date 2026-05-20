@@ -1,0 +1,37 @@
+name = "cv-platform"
+account_id = "YOUR_ACCOUNT_ID"
+workers_dev = true
+main = "functions/[[path]].ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 Database Binding
+[[d1_databases]]
+binding = "DB"
+database_name = "cv-platform"
+database_id = "YOUR_DATABASE_ID"  # Get from: wrangler d1 create cv-platform
+
+# R2 Bucket Binding
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "cv-uploads"
+jurisdiction = "eu"
+
+# Environment variables
+[env.production]
+vars = { ENVIRONMENT = "production", OPENAI_MODEL = "gpt-4-turbo" }
+route = "https://cv-platform.yourdomain.com/*"
+zone_id = "YOUR_ZONE_ID"
+
+[env.development]
+vars = { ENVIRONMENT = "development", OPENAI_MODEL = "gpt-4-turbo" }
+
+# Build configuration
+[build]
+command = "npm run build"
+
+# Alias configuration for bundling
+[alias]
+"@/utils" = "./functions/utils"
+"@/middleware" = "./functions/middleware"
+"@/api" = "./functions/api"

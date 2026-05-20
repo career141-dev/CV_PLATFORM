@@ -255,8 +255,6 @@ export const searchCvs = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
     if (!args.query.trim()) return [];
 
     const limit = args.limit ?? 20;

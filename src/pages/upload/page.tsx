@@ -1,13 +1,14 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
-import { useMutation, useAction, useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api.js";
-import { Authenticated } from "convex/react";
+import { useAuth } from "@usehercules/auth/react";
 import AppLayout from "@/components/app-layout.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { toast } from "sonner";
 import { Upload, FileText, CheckCircle, XCircle, Loader2, CloudUpload, X, PauseCircle, PlayCircle } from "lucide-react";
 import { cn } from "@/lib/utils.ts";
+
+// API base URL (configure for local dev vs production)
+const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 type FileStatus = "pending" | "uploading" | "processing" | "done" | "error" | "paused";
 
@@ -31,12 +32,29 @@ function UploadContent() {
   const [files, setFiles] = useState<UploadFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
+  const [pausedCvs, setPausedCvs] = useState<Array<{ id: string; fileName: string }>>([]);
+  const auth = useAuth();
+  const token = auth.user?.access_token;
 
-  const generateUploadUrl = useMutation(api.cvs.generateUploadUrl);
-  const createCv = useMutation(api.cvs.createCv);
-  const extractTextOnly = useAction(api.cvProcessing.extractTextOnly);
-  const resumeProcessing = useAction(api.cvProcessing.resumeProcessing);
-  const pausedCvs = useQuery(api.cvs.getPausedCvs, {});
+  // Load paused CVs on mount
+  useEffect(() => {
+    const loadPausedCvs = async () => {
+      if (!token) return;
+      try {
+        const response = await fetch(`${API_BASE}/api/cv/list?limit=100`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) return;
+        const result = (await response.json()) as { data: { cvs: Array<{ id: string; fileName: string; status: string }> } };
+        const paused = result.data.cvs.filter((cv) => cv.status === "paused");
+        setPausedCvs(paused);
+      } catch (err) {
+        console.error("Failed to load paused CVs:", err);
+      }
+    };
+
+    loadPausedCvs();
+  }, [token]);
 
   const onDrop = useCallback((accepted: File[]) => {
     const newFiles: UploadFile[] = accepted.map((file) => ({
@@ -67,6 +85,11 @@ function UploadContent() {
   };
 
   const uploadAll = async () => {
+    if (!token) {
+      toast.error("You must be logged in to upload files");
+      return;
+    }
+
     const pending = files.filter((f) => f.status === "pending");
     if (!pending.length) return;
 
@@ -75,39 +98,49 @@ function UploadContent() {
     for (const uf of pending) {
       updateFile(uf.id, { status: "uploading" });
       try {
-        // 1. Get upload URL
-        const uploadUrl = await generateUploadUrl();
+        // 1. Upload file & create CV record in one request
+        const formData = new FormData();
+        formData.append("file", uf.file);
 
-        // 2. Upload file
-        const res = await fetch(uploadUrl, {
+        const uploadRes = await fetch(`${API_BASE}/api/cv/upload`, {
           method: "POST",
-          headers: { "Content-Type": uf.file.type || "application/octet-stream" },
-          body: uf.file,
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
         });
-        if (!res.ok) throw new Error("Upload failed");
-        const { storageId } = (await res.json()) as { storageId: string };
 
-        // 3. Create CV record
-        const cvId = await createCv({
-          storageId: storageId as Parameters<typeof createCv>[0]["storageId"],
-          fileName: uf.file.name,
-          fileType: getFileType(uf.file),
-          fileSize: uf.file.size,
-        });
+        if (!uploadRes.ok) {
+          const error = (await uploadRes.json()) as { error?: string };
+          throw new Error(error.error || "Upload failed");
+        }
+
+        const uploadData = (await uploadRes.json()) as {
+          data: { cvId: string; storageKey: string; fileType: string };
+        };
+        const { cvId, storageKey, fileType } = uploadData.data;
 
         updateFile(uf.id, { status: "processing", cvId });
 
-        // 4. Extract text only (no AI — lazy structuring)
-        extractTextOnly({
-          cvId,
-          storageId: storageId as Parameters<typeof extractTextOnly>[0]["storageId"],
-          fileType: getFileType(uf.file),
-        }).then(() => {
-          updateFile(uf.id, { status: "done" });
-        }).catch((err: unknown) => {
-          const msg = err instanceof Error ? err.message : "Processing failed";
-          updateFile(uf.id, { status: "error", error: msg });
-        });
+        // 2. Start AI parsing (fire & forget - UI will show processing)
+        fetch(`${API_BASE}/api/ai/parse`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            cvId,
+            storageKey,
+            fileType,
+          }),
+        })
+          .then((res) => res.json())
+          .then(() => {
+            updateFile(uf.id, { status: "done" });
+          })
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : "Processing failed";
+            updateFile(uf.id, { status: "error", error: msg });
+          });
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Upload failed";
         updateFile(uf.id, { status: "error", error: msg });
@@ -120,16 +153,72 @@ function UploadContent() {
   };
 
   const handleResume = async () => {
+    if (!token) {
+      toast.error("You must be logged in");
+      return;
+    }
+
     setIsResuming(true);
     try {
-      const result = await resumeProcessing({});
-      if (result.resumed > 0) {
-        toast.success(`Resuming processing for ${result.resumed} paused CV${result.resumed !== 1 ? "s" : ""}`);
-      } else {
+      // Get paused CVs and resume processing for each
+      const listRes = await fetch(`${API_BASE}/api/cv/list?limit=100`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!listRes.ok) throw new Error("Failed to load CVs");
+
+      const listData = (await listRes.json()) as {
+        data: {
+          cvs: Array<{
+            id: string;
+            storageKey: string;
+            fileType: string;
+            status: string;
+          }>;
+        };
+      };
+      const paused = listData.data.cvs.filter((cv) => cv.status === "paused");
+
+      if (paused.length === 0) {
         toast.info("No paused CVs to resume.");
+        setIsResuming(false);
+        return;
       }
-    } catch {
-      toast.error("Failed to resume processing. Please try again.");
+
+      // Resume processing for each paused CV
+      let resumed = 0;
+      for (const cv of paused) {
+        try {
+          const parseRes = await fetch(`${API_BASE}/api/ai/parse`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              cvId: cv.id,
+              storageKey: cv.storageKey,
+              fileType: cv.fileType,
+            }),
+          });
+
+          if (parseRes.ok) {
+            resumed++;
+          }
+        } catch {
+          // Continue with next CV
+        }
+      }
+
+      if (resumed > 0) {
+        toast.success(`Resumed processing for ${resumed} paused CV${resumed !== 1 ? "s" : ""}`);
+        setPausedCvs((prev) => prev.filter((cv) => !paused.find((p) => p.id === cv.id)));
+      } else {
+        toast.error("Failed to resume processing. Please try again.");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to resume processing";
+      toast.error(msg);
     } finally {
       setIsResuming(false);
     }
@@ -156,8 +245,7 @@ function UploadContent() {
             <PauseCircle className="w-4 h-4 text-amber-500 shrink-0" />
             <p className="text-sm text-amber-700 dark:text-amber-400">
               <span className="font-semibold">{pausedCvs.length} CV{pausedCvs.length !== 1 ? "s" : ""} paused</span>
-              {" — "}AI credits ran out during processing. Top up your balance in{" "}
-              <strong>Settings → Billing → Cloud Usage</strong>, then click Resume.
+              {" — "}Processing was paused. Click Resume to continue.
             </p>
           </div>
           <Button
@@ -290,12 +378,10 @@ import RoleGuard from "@/components/role-guard.tsx";
 
 export default function UploadPage() {
   return (
-    <Authenticated>
-      <AppLayout>
-        <RoleGuard allowedRoles={["admin", "recruiter"]}>
-          <UploadContent />
-        </RoleGuard>
-      </AppLayout>
-    </Authenticated>
+    <AppLayout>
+      <RoleGuard allowedRoles={["admin", "recruiter"]}>
+        <UploadContent />
+      </RoleGuard>
+    </AppLayout>
   );
 }
