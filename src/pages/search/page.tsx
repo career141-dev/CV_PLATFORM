@@ -32,10 +32,6 @@ type SearchResponse = {
   interpretation: SearchInterpretation;
   results: SearchResult[];
 };
-type SearchResponse = {
-  interpretation: SearchInterpretation;
-  results: SearchResult[];
-};
 
 type CV = {
   id: string;
@@ -295,8 +291,6 @@ function SearchContent() {
       return;
     }
     setLastQuery(searchQuery);
-  };
-    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

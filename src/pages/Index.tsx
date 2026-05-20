@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { motion } from "motion/react";
-import { Authenticated, Unauthenticated, AuthLoading } from "convex/react";
+import { useAuth, enableDemoMode } from "@/hooks/use-auth.ts";
 import { SignInButton } from "@/components/ui/signin.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
@@ -42,6 +42,8 @@ const features = [
 ];
 
 export default function Index() {
+  const { isAuthenticated, isLoading } = useAuth();
+
   return (
     <div className="min-h-screen bg-background">
       {/* Navbar */}
@@ -51,17 +53,20 @@ export default function Index() {
             <img src={LOGO_URL} alt="Career141" className="h-16 w-auto" />
           </div>
           <div className="flex items-center gap-3">
-            <AuthLoading>
+            {isLoading ? (
               <Skeleton className="h-9 w-24" />
-            </AuthLoading>
-            <Unauthenticated>
-              <SignInButton />
-            </Unauthenticated>
-            <Authenticated>
+            ) : isAuthenticated ? (
               <Link to="/dashboard">
                 <Button size="sm">Go to Dashboard</Button>
               </Link>
-            </Authenticated>
+            ) : (
+              <>
+                <SignInButton />
+                <Button size="sm" variant="outline" onClick={enableDemoMode}>
+                  Demo Login
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </nav>
@@ -86,23 +91,31 @@ export default function Index() {
             Search through 115,000+ CVs using plain English. Describe what you need — our AI finds the best matching profiles instantly.
           </p>
           <div className="flex items-center justify-center gap-3 flex-wrap">
-            <Unauthenticated>
-              <SignInButton />
-            </Unauthenticated>
-            <Authenticated>
-              <Link to="/search">
-                <Button size="lg" className="gap-2">
-                  <Search className="w-4 h-4" />
-                  Search CVs
+            {isLoading ? (
+              <Skeleton className="h-12 w-40" />
+            ) : isAuthenticated ? (
+              <>
+                <Link to="/search">
+                  <Button size="lg" className="gap-2">
+                    <Search className="w-4 h-4" />
+                    Search CVs
+                  </Button>
+                </Link>
+                <Link to="/upload">
+                  <Button size="lg" variant="secondary" className="gap-2">
+                    <Upload className="w-4 h-4" />
+                    Upload CVs
+                  </Button>
+                </Link>
+              </>
+            ) : (
+              <>
+                <SignInButton />
+                <Button size="lg" variant="outline" onClick={enableDemoMode}>
+                  Demo Login
                 </Button>
-              </Link>
-              <Link to="/upload">
-                <Button size="lg" variant="secondary" className="gap-2">
-                  <Upload className="w-4 h-4" />
-                  Upload CVs
-                </Button>
-              </Link>
-            </Authenticated>
+              </>
+            )}
           </div>
         </motion.div>
       </section>

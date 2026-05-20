@@ -6,10 +6,12 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel.d.ts";
 import OpenAI from "openai";
 
-const openai = new OpenAI({
-  baseURL: "https://ai-gateway.hercules.app/v1",
-  apiKey: process.env.HERCULES_API_KEY,
-});
+function getOpenAI() {
+  return new OpenAI({
+    baseURL: "https://ai-gateway.hercules.app/v1",
+    apiKey: process.env.HERCULES_API_KEY,
+  });
+}
 
 const WA_TOKEN = process.env.WHATSAPP_TOKEN ?? "";
 const WA_PHONE_ID = process.env.WHATSAPP_PHONE_ID ?? "";
@@ -74,7 +76,7 @@ function matchJobFromMessage(
 // ─── CV scoring against JD ────────────────────────────────────────────────────
 
 async function scoreCvAgainstJob(cvText: string, jobTitle: string, jobDescription: string): Promise<number> {
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: "openai/gpt-5-mini",
     messages: [
       {

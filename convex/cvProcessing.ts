@@ -8,10 +8,12 @@ import { ConvexError } from "convex/values";
 import type { Id } from "./_generated/dataModel.d.ts";
 import OpenAI from "openai";
 
-const openai = new OpenAI({
-  baseURL: "https://ai-gateway.hercules.app/v1",
-  apiKey: process.env.HERCULES_API_KEY,
-});
+function getOpenAI() {
+  return new OpenAI({
+    baseURL: "https://ai-gateway.hercules.app/v1",
+    apiKey: process.env.HERCULES_API_KEY,
+  });
+}
 
 async function extractTextFromPdf(buffer: ArrayBuffer): Promise<string> {
   const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -65,7 +67,7 @@ type CvStructuredData = {
 };
 
 async function parseCvWithAI(rawText: string): Promise<CvStructuredData> {
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: "openai/gpt-5-mini",
     messages: [
       {
@@ -279,7 +281,7 @@ async function structureCv(
   cvId: string,
   rawText: string
 ): Promise<CvStructuredData> {
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: "openai/gpt-5-mini",
     messages: [
       {
@@ -385,7 +387,7 @@ export const matchByJobDescription = action({
 
     const [parseResponse, ...broadSearches] = await Promise.all([
       // AI: parse JD into structured requirements
-      openai.chat.completions.create({
+      getOpenAI().chat.completions.create({
         model: "openai/gpt-5-mini",
         messages: [
           {
@@ -492,7 +494,7 @@ Return ONLY valid JSON with these fields (use null if not specified):
       snippet: (cv.rawText ?? "").slice(0, 500),
     }));
 
-    const scoreResponse = await openai.chat.completions.create({
+    const scoreResponse = await getOpenAI().chat.completions.create({
       model: "openai/gpt-5-mini",
       messages: [
         {
@@ -589,7 +591,7 @@ export const aiSearch = action({
     // Run AI interpretation AND the raw-query DB fetch IN PARALLEL
     // so we don't wait for AI before hitting the database
     const [interpretResponse, rawQueryResults] = await Promise.all([
-      openai.chat.completions.create({
+      getOpenAI().chat.completions.create({
         model: "openai/gpt-5-mini",
         messages: [
           {
@@ -686,7 +688,7 @@ Return JSON with these fields:
       snippet: (cv.rawText ?? "").slice(0, 500),
     }));
 
-    const rankResponse = await openai.chat.completions.create({
+    const rankResponse = await getOpenAI().chat.completions.create({
       model: "openai/gpt-5-mini",
       messages: [
         {

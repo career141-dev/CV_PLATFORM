@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as claudeProcessing from "../claudeProcessing.js";
 import type * as cvProcessing from "../cvProcessing.js";
 import type * as cvs from "../cvs.js";
 import type * as http from "../http.js";
@@ -36,6 +37,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  claudeProcessing: typeof claudeProcessing;
   cvProcessing: typeof cvProcessing;
   cvs: typeof cvs;
   http: typeof http;

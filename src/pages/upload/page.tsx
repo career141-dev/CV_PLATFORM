@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
-import { useAuth } from "@usehercules/auth/react";
+import { useAuth } from "@/hooks/use-auth.ts";
 import AppLayout from "@/components/app-layout.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { toast } from "sonner";

@@ -2,9 +2,11 @@ import { action } from "./_generated/server";
 import { v } from "convex/values";
 import Anthropic from "@anthropic-ai/sdk";
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+function getAnthropic() {
+  return new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  });
+}
 
 /**
  * Process CV text using Claude AI
@@ -35,7 +37,7 @@ export const processCVWithClaude = action({
 
 Be accurate and extract only information explicitly stated in the CV. For seniority, infer from experience level.`;
 
-      const message = await anthropic.messages.create({
+      const message = await getAnthropic().messages.create({
         model: "claude-3-5-sonnet-20241022",
         max_tokens: 2048,
         system: systemPrompt,
@@ -104,7 +106,7 @@ export const matchCVToJob = action({
   },
   handler: async (ctx, args) => {
     try {
-      const message = await anthropic.messages.create({
+      const message = await getAnthropic().messages.create({
         model: "claude-3-5-sonnet-20241022",
         max_tokens: 1024,
         messages: [
@@ -175,7 +177,7 @@ export const generateInterviewQuestions = action({
     try {
       const questionCount = args.count || 5;
 
-      const message = await anthropic.messages.create({
+      const message = await getAnthropic().messages.create({
         model: "claude-3-5-sonnet-20241022",
         max_tokens: 1024,
         messages: [

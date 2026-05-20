@@ -1,1 +1,1 @@
-export { useUser, useAuth } from "@usehercules/auth/react";
+export { useAuth, useUser, isDemoMode, enableDemoMode, disableDemoMode } from "@/components/providers/auth";
