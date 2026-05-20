@@ -2,7 +2,7 @@ import { Env, ApiResponse, CVStructuredData } from '../../utils/types';
 import { requireAuth } from '../../middleware/auth';
 import { withCors, handleCorsPrelight } from '../../middleware/cors';
 import { getFile } from '../../utils/r2';
-import { getCv, saveCvData, updateCvStatus } from '../../utils/db';
+import { getCv, saveCvData, saveRawText, updateCvStatus } from '../../utils/db';
 import OpenAI from 'openai';
 
 // Text extraction functions (from original cvProcessing.ts)
@@ -170,7 +170,26 @@ export async function onRequest(context: any): Promise<Response> {
         throw new Error('Could not extract sufficient text from file');
       }
 
-      // Parse with OpenAI (SAME ENDPOINT - NO CHANGES)
+      if (!env.OPENAI_API_KEY) {
+        // No AI key configured — save raw text only
+        await saveRawText(env, cvId, rawText.slice(0, 50000));
+        return withCors(
+          new Response(
+            JSON.stringify({
+              success: true,
+              data: {
+                cvId,
+                rawText: rawText.slice(0, 50000),
+                message: 'Text extracted. AI parsing skipped — set OPENAI_API_KEY to enable.',
+              },
+            } as ApiResponse),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          ),
+          request.headers.get('Origin') || undefined
+        );
+      }
+
+      // Parse with OpenAI
       const openai = new OpenAI({
         apiKey: env.OPENAI_API_KEY,
       });

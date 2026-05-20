@@ -671,7 +671,7 @@ function JobDetailView({ job, onBack, autoMatchDescription }: {
       await saveMatchResults({ jobId: job._id, matchResults: res.matches, jobRequirements: res.jobRequirements });
       toast.success(`Found ${res.matches.length} matching candidates`);
     } catch {
-      toast.error("Matching failed. Please check your Hercules Cloud balance.");
+      toast.error("Matching failed. Please check your Hercules Cloud balance or API key configuration.");
     } finally {
       setIsMatching(false);
     }

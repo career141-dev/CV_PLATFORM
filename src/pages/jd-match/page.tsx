@@ -441,7 +441,7 @@ function JdMatchContent() {
         toast.info("No matching candidates found. Try a different job description.");
       }
     } catch {
-      toast.error("Matching failed. Please check your Hercules Cloud balance and try again.");
+      toast.error("Matching failed. Please check your Hercules Cloud balance or API key configuration.");
     } finally {
       setIsMatching(false);
     }

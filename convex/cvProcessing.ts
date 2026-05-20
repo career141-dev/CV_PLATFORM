@@ -8,7 +8,12 @@ import { ConvexError } from "convex/values";
 import type { Id } from "./_generated/dataModel.d.ts";
 import OpenAI from "openai";
 
+const hasAiKeys = !!process.env.HERCULES_API_KEY;
+
 function getOpenAI() {
+  if (!hasAiKeys) {
+    throw new ConvexError({ message: "AI service not configured — set HERCULES_API_KEY", code: "AI_NOT_CONFIGURED" });
+  }
   return new OpenAI({
     baseURL: "https://ai-gateway.hercules.app/v1",
     apiKey: process.env.HERCULES_API_KEY,
@@ -67,6 +72,9 @@ type CvStructuredData = {
 };
 
 async function parseCvWithAI(rawText: string): Promise<CvStructuredData> {
+  if (!hasAiKeys) {
+    throw new ConvexError({ message: "AI service not configured — set HERCULES_API_KEY", code: "AI_NOT_CONFIGURED" });
+  }
   const response = await getOpenAI().chat.completions.create({
     model: "openai/gpt-5-mini",
     messages: [
@@ -184,26 +192,34 @@ export const processCv = action({
         throw new Error("Could not extract sufficient text from file");
       }
 
-      // Parse with AI
-      const structured = await parseCvWithAI(rawText);
+      // Parse with AI (skip if no AI keys configured)
+      if (hasAiKeys) {
+        const structured = await parseCvWithAI(rawText);
 
-      // Save everything
-      await ctx.runMutation(api.cvs.saveCvData, {
-        cvId: args.cvId,
-        rawText: rawText.slice(0, 50000), // cap at 50k chars
-        candidateName: structured.candidateName,
-        email: structured.email,
-        phone: structured.phone,
-        location: structured.location,
-        currentTitle: structured.currentTitle,
-        industry: structured.industry,
-        sector: structured.sector,
-        seniority: structured.seniority,
-        yearsOfExperience: structured.yearsOfExperience,
-        skills: structured.skills,
-        languages: structured.languages,
-        summary: structured.summary,
-      });
+        // Save everything
+        await ctx.runMutation(api.cvs.saveCvData, {
+          cvId: args.cvId,
+          rawText: rawText.slice(0, 50000), // cap at 50k chars
+          candidateName: structured.candidateName,
+          email: structured.email,
+          phone: structured.phone,
+          location: structured.location,
+          currentTitle: structured.currentTitle,
+          industry: structured.industry,
+          sector: structured.sector,
+          seniority: structured.seniority,
+          yearsOfExperience: structured.yearsOfExperience,
+          skills: structured.skills,
+          languages: structured.languages,
+          summary: structured.summary,
+        });
+      } else {
+        // Save raw text only — no AI structuring available
+        await ctx.runMutation(api.cvs.saveRawText, {
+          cvId: args.cvId,
+          rawText: rawText.slice(0, 50000),
+        });
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Processing failed";
       // Detect insufficient balance (403) — pause instead of error so user can resume later
@@ -376,6 +392,23 @@ export const matchByJobDescription = action({
     jobRequirements: JobRequirements;
     matches: CandidateMatch[];
   }> => {
+    if (!hasAiKeys) {
+      return {
+        jobRequirements: {
+          title: "Position",
+          requiredSkills: [],
+          preferredSkills: [],
+          minYearsExperience: null,
+          industry: null,
+          seniority: null,
+          location: null,
+          education: null,
+          summary: "AI matching not available — set HERCULES_API_KEY to enable",
+        },
+        matches: [],
+      };
+    }
+
     // Run JD parsing and broad candidate fetch IN PARALLEL
     // The broad fetch uses key terms extracted directly from the raw JD text
     // to avoid waiting for the parse to complete before hitting the DB
@@ -587,6 +620,22 @@ export const aiSearch = action({
     results: { cvId: string; score: number; reason: string }[];
   }> => {
     const fetchLimit = (args.limit ?? 20) * 2;
+
+    if (!hasAiKeys) {
+      const rawResults = await ctx.runQuery(api.cvs.searchCvs, { query: args.query, limit: fetchLimit });
+      return {
+        interpretation: {
+          searchText: args.query,
+          interpretation: `Searching for: "${args.query}"`,
+          keywords: [],
+        },
+        results: rawResults.map((cv) => ({
+          cvId: cv._id,
+          score: 70,
+          reason: `Matches search query: ${args.query}`,
+        })),
+      };
+    }
 
     // Run AI interpretation AND the raw-query DB fetch IN PARALLEL
     // so we don't wait for AI before hitting the database

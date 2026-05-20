@@ -6,6 +6,8 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel.d.ts";
 import OpenAI from "openai";
 
+const hasAiKeys = !!process.env.HERCULES_API_KEY;
+
 function getOpenAI() {
   return new OpenAI({
     baseURL: "https://ai-gateway.hercules.app/v1",
@@ -76,6 +78,7 @@ function matchJobFromMessage(
 // ─── CV scoring against JD ────────────────────────────────────────────────────
 
 async function scoreCvAgainstJob(cvText: string, jobTitle: string, jobDescription: string): Promise<number> {
+  if (!hasAiKeys) return 50;
   const response = await getOpenAI().chat.completions.create({
     model: "openai/gpt-5-mini",
     messages: [

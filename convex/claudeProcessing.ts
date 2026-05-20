@@ -1,8 +1,14 @@
 import { action } from "./_generated/server";
 import { v } from "convex/values";
+import { ConvexError } from "convex/values";
 import Anthropic from "@anthropic-ai/sdk";
 
+const hasClaudeKey = !!process.env.ANTHROPIC_API_KEY;
+
 function getAnthropic() {
+  if (!hasClaudeKey) {
+    throw new ConvexError({ message: "Claude AI service not configured — set ANTHROPIC_API_KEY", code: "AI_NOT_CONFIGURED" });
+  }
   return new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
   });
@@ -18,6 +24,9 @@ export const processCVWithClaude = action({
     cvId: v.string(),
   },
   handler: async (ctx, args) => {
+    if (!hasClaudeKey) {
+      throw new ConvexError({ message: "Claude AI service not configured — set ANTHROPIC_API_KEY", code: "AI_NOT_CONFIGURED" });
+    }
     try {
       const systemPrompt = `You are an expert HR recruiter and CV parser. Analyze the provided CV text and extract the following information in JSON format:
 {
@@ -105,6 +114,9 @@ export const matchCVToJob = action({
     jobId: v.string(),
   },
   handler: async (ctx, args) => {
+    if (!hasClaudeKey) {
+      throw new ConvexError({ message: "Claude AI service not configured — set ANTHROPIC_API_KEY", code: "AI_NOT_CONFIGURED" });
+    }
     try {
       const message = await getAnthropic().messages.create({
         model: "claude-3-5-sonnet-20241022",
@@ -174,6 +186,9 @@ export const generateInterviewQuestions = action({
     count: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    if (!hasClaudeKey) {
+      throw new ConvexError({ message: "Claude AI service not configured — set ANTHROPIC_API_KEY", code: "AI_NOT_CONFIGURED" });
+    }
     try {
       const questionCount = args.count || 5;
 
