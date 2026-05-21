@@ -1,5 +1,5 @@
-import { createContext, useContext, type ReactNode } from "react";
-import { HerculesAuthProvider, useAuth as useHerculesAuth } from "@usehercules/auth/react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { useAuth as useClerkAuth, useUser as useClerkUser, useClerk } from "@clerk/clerk-react";
 
 interface AuthUser {
   profile: { sub: string; name: string; email: string };
@@ -59,17 +59,44 @@ function DemoSync({ children }: { children: ReactNode }) {
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }
 
-function HerculesSync({ children }: { children: ReactNode }) {
-  const h = useHerculesAuth();
+function ClerkSync({ children }: { children: ReactNode }) {
+  const { isSignedIn, isLoaded, signOut, getToken } = useClerkAuth();
+  const { user: clerkUser } = useClerkUser();
+  const clerk = useClerk();
+  const [token, setToken] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (isSignedIn) {
+      getToken().then((t) => setToken(t ?? undefined));
+    } else {
+      setToken(undefined);
+    }
+  }, [isSignedIn, getToken]);
+
   const value: AuthContextValue = {
-    user: h.user,
-    isAuthenticated: h.isAuthenticated,
-    isLoading: h.isLoading,
-    signin: h.signin,
-    signout: h.signout,
-    removeUser: h.removeUser ?? (() => {}),
-    error: h.error,
+    user: isSignedIn && clerkUser
+      ? {
+          profile: {
+            sub: clerkUser.id,
+            name: clerkUser.fullName ?? "",
+            email: clerkUser.primaryEmailAddress?.emailAddress ?? "",
+          },
+          access_token: token,
+        }
+      : null,
+    isAuthenticated: !!isSignedIn,
+    isLoading: !isLoaded,
+    signin: async () => {
+      await clerk.redirectToSignIn();
+    },
+    signout: async () => {
+      await signOut();
+    },
+    removeUser: () => {
+      signOut();
+    },
   };
+
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }
 
@@ -78,23 +105,5 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return <DemoSync>{children}</DemoSync>;
   }
 
-  return (
-    <HerculesAuthProvider
-      authority={import.meta.env.VITE_HERCULES_OIDC_AUTHORITY!}
-      client_id={import.meta.env.VITE_HERCULES_OIDC_CLIENT_ID!}
-      userManagerSettings={{
-        prompt: import.meta.env.VITE_HERCULES_OIDC_PROMPT ?? "select_account",
-        response_type:
-          import.meta.env.VITE_HERCULES_OIDC_RESPONSE_TYPE ?? "code",
-        scope:
-          import.meta.env.VITE_HERCULES_OIDC_SCOPE ??
-          "openid profile email offline_access",
-        redirect_uri:
-          import.meta.env.VITE_HERCULES_OIDC_REDIRECT_URI ??
-          `${window.location.origin}/auth/callback`,
-      }}
-    >
-      <HerculesSync>{children}</HerculesSync>
-    </HerculesAuthProvider>
-  );
+  return <ClerkSync>{children}</ClerkSync>;
 }

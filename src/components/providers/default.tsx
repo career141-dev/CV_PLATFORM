@@ -1,14 +1,39 @@
-import { AuthProvider } from "./auth.tsx";
+import { useEffect, useState } from "react";
+import { useMutation } from "convex/react";
+import { api } from "@/convex/_generated/api.js";
+import { ClerkProvider } from "@clerk/clerk-react";
+import { AuthProvider, isDemoMode } from "./auth.tsx";
 import { ConvexProvider } from "./convex.tsx";
+import { useAuth } from "./auth.tsx";
 import { QueryClientProvider } from "./query-client.tsx";
 import { ThemeProvider } from "./theme.tsx";
 import { Toaster } from "../ui/sonner.tsx";
 import { TooltipProvider } from "../ui/tooltip.tsx";
 
-export function DefaultProviders({ children }: { children: React.ReactNode }) {
+function UserSync() {
+  const { isAuthenticated } = useAuth();
+  const updateCurrentUser = useMutation(api.users.updateCurrentUser);
+  const [synced, setSynced] = useState(false);
+
+  useEffect(() => {
+    if (isAuthenticated && !synced) {
+      updateCurrentUser()
+        .then(() => setSynced(true))
+        .catch((err) => console.error("Failed to sync user:", err));
+    }
+    if (!isAuthenticated) {
+      setSynced(false);
+    }
+  }, [isAuthenticated, synced, updateCurrentUser]);
+
+  return null;
+}
+
+function Providers({ children }: { children: React.ReactNode }) {
   return (
     <AuthProvider>
       <ConvexProvider>
+        <UserSync />
         <QueryClientProvider>
           <TooltipProvider>
             <ThemeProvider>
@@ -19,5 +44,17 @@ export function DefaultProviders({ children }: { children: React.ReactNode }) {
         </QueryClientProvider>
       </ConvexProvider>
     </AuthProvider>
+  );
+}
+
+export function DefaultProviders({ children }: { children: React.ReactNode }) {
+  if (isDemoMode()) {
+    return <Providers>{children}</Providers>;
+  }
+
+  return (
+    <ClerkProvider publishableKey={import.meta.env.VITE_CLERK_PUBLISHABLE_KEY!}>
+      <Providers>{children}</Providers>
+    </ClerkProvider>
   );
 }

@@ -1,5 +1,5 @@
 import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
-import { ConvexProviderWithHerculesAuth } from "@usehercules/auth/convex-react";
+import { useAuth as useClerkAuth } from "@clerk/clerk-react";
 import { isDemoMode } from "./auth.tsx";
 import type { ReactNode } from "react";
 
@@ -11,14 +11,28 @@ function useFakeAuth() {
   };
 }
 
+function useClerkAuthForConvex() {
+  const { isLoaded, isSignedIn, getToken } = useClerkAuth();
+  return {
+    isLoading: !isLoaded,
+    isAuthenticated: !!isSignedIn,
+    fetchAccessToken: async ({ forceRefreshToken }: { forceRefreshToken?: boolean } = {}) => {
+      if (forceRefreshToken) {
+        return getToken({ skipCache: true });
+      }
+      return getToken();
+    },
+  };
+}
+
 function RealConvexProvider({ children }: { children: ReactNode }) {
   const convexUrl = import.meta.env.VITE_CONVEX_URL ?? "http://localhost:3000";
   const convex = new ConvexReactClient(convexUrl);
 
   return (
-    <ConvexProviderWithHerculesAuth client={convex}>
+    <ConvexProviderWithAuth client={convex} useAuth={useClerkAuthForConvex}>
       {children}
-    </ConvexProviderWithHerculesAuth>
+    </ConvexProviderWithAuth>
   );
 }
 

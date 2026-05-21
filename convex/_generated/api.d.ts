@@ -11,6 +11,7 @@
 import type * as claudeProcessing from "../claudeProcessing.js";
 import type * as cvProcessing from "../cvProcessing.js";
 import type * as cvs from "../cvs.js";
+import type * as deleteCvs from "../deleteCvs.js";
 import type * as http from "../http.js";
 import type * as jobs from "../jobs.js";
 import type * as m365_actions from "../m365/actions.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   claudeProcessing: typeof claudeProcessing;
   cvProcessing: typeof cvProcessing;
   cvs: typeof cvs;
+  deleteCvs: typeof deleteCvs;
   http: typeof http;
   jobs: typeof jobs;
   "m365/actions": typeof m365_actions;
