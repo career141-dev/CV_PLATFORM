@@ -13,6 +13,7 @@ interface AuthContextValue {
   signin: (...args: any[]) => Promise<void>;
   signout: (...args: any[]) => Promise<void>;
   removeUser: () => void;
+  getToken: () => Promise<string | null>;
   error?: any;
 }
 
@@ -55,6 +56,7 @@ function DemoSync({ children }: { children: ReactNode }) {
     signin: async () => {},
     signout: async () => { disableDemoMode(); },
     removeUser: () => { disableDemoMode(); },
+    getToken: async () => "demo-token",
   };
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }
@@ -63,15 +65,6 @@ function ClerkSync({ children }: { children: ReactNode }) {
   const { isSignedIn, isLoaded, signOut, getToken } = useClerkAuth();
   const { user: clerkUser } = useClerkUser();
   const clerk = useClerk();
-  const [token, setToken] = useState<string | undefined>(undefined);
-
-  useEffect(() => {
-    if (isSignedIn) {
-      getToken().then((t) => setToken(t ?? undefined));
-    } else {
-      setToken(undefined);
-    }
-  }, [isSignedIn, getToken]);
 
   const value: AuthContextValue = {
     user: isSignedIn && clerkUser
@@ -81,7 +74,7 @@ function ClerkSync({ children }: { children: ReactNode }) {
             name: clerkUser.fullName ?? "",
             email: clerkUser.primaryEmailAddress?.emailAddress ?? "",
           },
-          access_token: token,
+          access_token: undefined,
         }
       : null,
     isAuthenticated: !!isSignedIn,
@@ -94,6 +87,10 @@ function ClerkSync({ children }: { children: ReactNode }) {
     },
     removeUser: () => {
       signOut();
+    },
+    getToken: async () => {
+      const token = await getToken({ template: "convex" });
+      return token ?? null;
     },
   };
 

@@ -25,7 +25,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const navItems = role ? baseNavItems.filter(item => item.roles.includes(role)) : [];
+  const navItems = baseNavItems.filter(
+    item => !item.roles || item.roles.includes(role ?? "recruiter"),
+  );
 
   return (
     <div className="flex h-screen bg-background">

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useMutation } from "convex/react";
+import { useConvexAuth, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import { ClerkProvider } from "@clerk/clerk-react";
 import { AuthProvider, isDemoMode } from "./auth.tsx";
@@ -12,11 +12,12 @@ import { TooltipProvider } from "../ui/tooltip.tsx";
 
 function UserSync() {
   const { isAuthenticated } = useAuth();
+  const { isAuthenticated: isConvexReady, isLoading: isConvexLoading } = useConvexAuth();
   const updateCurrentUser = useMutation(api.users.updateCurrentUser);
   const [synced, setSynced] = useState(false);
 
   useEffect(() => {
-    if (isAuthenticated && !synced) {
+    if (isAuthenticated && isConvexReady && !synced && !isConvexLoading) {
       updateCurrentUser()
         .then(() => setSynced(true))
         .catch((err) => console.error("Failed to sync user:", err));
@@ -24,7 +25,7 @@ function UserSync() {
     if (!isAuthenticated) {
       setSynced(false);
     }
-  }, [isAuthenticated, synced, updateCurrentUser]);
+  }, [isAuthenticated, isConvexReady, isConvexLoading, synced, updateCurrentUser]);
 
   return null;
 }
@@ -53,7 +54,11 @@ export function DefaultProviders({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <ClerkProvider publishableKey={import.meta.env.VITE_CLERK_PUBLISHABLE_KEY!}>
+    <ClerkProvider
+      publishableKey={import.meta.env.VITE_CLERK_PUBLISHABLE_KEY!}
+      afterSignInUrl="/dashboard"
+      afterSignUpUrl="/dashboard"
+    >
       <Providers>{children}</Providers>
     </ClerkProvider>
   );

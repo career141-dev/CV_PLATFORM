@@ -37,20 +37,19 @@ export const updateCurrentUser = mutation({
       .unique();
 
     if (existing) {
-      // Hardcoded admin always stays approved + admin role
-      if (isHardcodedAdmin && (existing.role !== "admin" || !existing.isApproved)) {
+      if (isHardcodedAdmin && existing.role !== "admin") {
         await ctx.db.patch(existing._id, { role: "admin", isApproved: true });
+      }
+      if (!existing.isApproved) {
+        await ctx.db.patch(existing._id, { isApproved: true });
       }
       return existing._id;
     }
 
-    // New user — check approved list
-    let role: Role = "viewer";
-    let isApproved = false;
+    let role: Role = "recruiter";
 
     if (isHardcodedAdmin) {
       role = "admin";
-      isApproved = true;
     } else {
       const approval = await ctx.db
         .query("approvedEmails")
@@ -58,7 +57,6 @@ export const updateCurrentUser = mutation({
         .unique();
       if (approval) {
         role = approval.role;
-        isApproved = true;
       }
     }
 
@@ -67,7 +65,7 @@ export const updateCurrentUser = mutation({
       email,
       tokenIdentifier: identity.tokenIdentifier,
       role,
-      isApproved,
+      isApproved: true,
     });
   },
 });

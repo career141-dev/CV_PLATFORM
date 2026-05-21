@@ -1,7 +1,9 @@
 import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
 import { useAuth as useClerkAuth } from "@clerk/clerk-react";
 import { isDemoMode } from "./auth.tsx";
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
+
+const convexUrl = import.meta.env.VITE_CONVEX_URL ?? "http://localhost:3000";
 
 function useFakeAuth() {
   return {
@@ -18,16 +20,15 @@ function useClerkAuthForConvex() {
     isAuthenticated: !!isSignedIn,
     fetchAccessToken: async ({ forceRefreshToken }: { forceRefreshToken?: boolean } = {}) => {
       if (forceRefreshToken) {
-        return getToken({ skipCache: true });
+        return getToken({ template: "convex", skipCache: true });
       }
-      return getToken();
+      return getToken({ template: "convex" });
     },
   };
 }
 
 function RealConvexProvider({ children }: { children: ReactNode }) {
-  const convexUrl = import.meta.env.VITE_CONVEX_URL ?? "http://localhost:3000";
-  const convex = new ConvexReactClient(convexUrl);
+  const convex = useMemo(() => new ConvexReactClient(convexUrl), []);
 
   return (
     <ConvexProviderWithAuth client={convex} useAuth={useClerkAuthForConvex}>
@@ -37,8 +38,7 @@ function RealConvexProvider({ children }: { children: ReactNode }) {
 }
 
 function DemoConvexProvider({ children }: { children: ReactNode }) {
-  const convexUrl = import.meta.env.VITE_CONVEX_URL ?? "http://localhost:3000";
-  const convex = new ConvexReactClient(convexUrl);
+  const convex = useMemo(() => new ConvexReactClient(convexUrl), []);
 
   return (
     <ConvexProviderWithAuth client={convex} useAuth={useFakeAuth}>

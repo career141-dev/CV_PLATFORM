@@ -249,20 +249,21 @@ export const getStats = query({
 
 export const searchCvs = query({
   args: {
-    query: v.string(),
+    query: v.optional(v.string()),
     industry: v.optional(v.string()),
     seniority: v.optional(v.string()),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    if (!args.query.trim()) return [];
+    if (!args.query?.trim()) return [];
+    const query: string = args.query;
 
     const limit = args.limit ?? 20;
 
     const textSearch = ctx.db
       .query("cvs")
       .withSearchIndex("search_text", (q) => {
-        const s = q.search("rawText", args.query).eq("status", "ready");
+        const s = q.search("rawText", query).eq("status", "ready");
         return s;
       });
 
@@ -271,7 +272,7 @@ export const searchCvs = query({
     const summaryResults = await ctx.db
       .query("cvs")
       .withSearchIndex("search_summary", (q) =>
-        q.search("summary", args.query).eq("status", "ready")
+        q.search("summary", query).eq("status", "ready")
       )
       .take(limit);
 

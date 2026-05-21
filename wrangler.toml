@@ -1,5 +1,5 @@
 name = "cv-platform"
-account_id = "YOUR_ACCOUNT_ID"
+account_id = "7b027995db9a3a19b41e818174d157c4"
 workers_dev = true
 main = "functions/[[path]].ts"
 compatibility_date = "2024-01-01"

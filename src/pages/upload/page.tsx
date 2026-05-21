@@ -33,14 +33,14 @@ function UploadContent() {
   const [isUploading, setIsUploading] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
   const [pausedCvs, setPausedCvs] = useState<Array<{ id: string; fileName: string }>>([]);
-  const auth = useAuth();
-  const token = auth.user?.access_token;
+  const { getToken } = useAuth();
 
   // Load paused CVs on mount
   useEffect(() => {
     const loadPausedCvs = async () => {
-      if (!token) return;
       try {
+        const token = await getToken();
+        if (!token) return;
         const response = await fetch(`${API_BASE}/api/cv/list?limit=100`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -54,7 +54,7 @@ function UploadContent() {
     };
 
     loadPausedCvs();
-  }, [token]);
+  }, [getToken]);
 
   const onDrop = useCallback((accepted: File[]) => {
     const newFiles: UploadFile[] = accepted.map((file) => ({
@@ -85,6 +85,7 @@ function UploadContent() {
   };
 
   const uploadAll = async () => {
+    const token = await getToken();
     if (!token) {
       toast.error("You must be logged in to upload files");
       return;
@@ -153,6 +154,7 @@ function UploadContent() {
   };
 
   const handleResume = async () => {
+    const token = await getToken();
     if (!token) {
       toast.error("You must be logged in");
       return;
