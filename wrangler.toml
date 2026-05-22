@@ -30,8 +30,3 @@ vars = { ENVIRONMENT = "development", OPENAI_MODEL = "gpt-4-turbo" }
 [build]
 command = "npm run build"
 
-# Alias configuration for bundling
-[alias]
-"@/utils" = "./functions/utils"
-"@/middleware" = "./functions/middleware"
-"@/api" = "./functions/api"

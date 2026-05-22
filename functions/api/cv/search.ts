@@ -1,6 +1,6 @@
-import type { Env } from "@/utils/types";
-import { withCors } from "@/middleware/cors";
-import { searchCvs } from "@/utils/db";
+import type { Env } from "../../utils/types";
+import { withCors } from "../../middleware/cors";
+import { searchCvs } from "../../utils/db";
 
 export async function onRequest(context: { request: Request; env: Env }) {
   const { request, env } = context;

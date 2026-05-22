@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/utils.ts";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select.tsx";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 
@@ -441,9 +442,6 @@ function SearchContent() {
     </div>
   );
 }
-
-// Import Select components
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select.tsx";
 
 export default function SearchPage() {
   return (
