@@ -20,14 +20,17 @@ const baseNavItems = [
 ];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
-  const { removeUser, user } = useAuth();
+  const { removeUser, user, isLoading } = useAuth();
   const role = useRole();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const navItems = baseNavItems.filter(
-    item => !item.roles || item.roles.includes(role ?? "recruiter"),
-  );
+  const navReady = role !== undefined;
+  const navItems = navReady
+    ? baseNavItems.filter(
+        item => !item.roles || item.roles.includes(role ?? "recruiter"),
+      )
+    : [];
 
   return (
     <div className="flex h-screen bg-background">
@@ -56,14 +59,21 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="p-3 border-t border-sidebar-border">
-          <div className="flex items-center gap-2 px-2 mb-2">
-            <div className="w-6 h-6 rounded-full bg-sidebar-primary/30 flex items-center justify-center text-xs font-bold text-sidebar-primary-foreground">
-              {user?.profile.name?.[0]?.toUpperCase() ?? "U"}
+          {isLoading ? (
+            <div className="flex items-center gap-2 px-2 mb-2">
+              <div className="w-6 h-6 rounded-full bg-sidebar-accent/50 animate-pulse" />
+              <div className="h-3 w-24 bg-sidebar-accent/50 rounded animate-pulse" />
             </div>
-            <span className="text-xs text-sidebar-foreground/70 truncate flex-1">
-              {user?.profile.email ?? user?.profile.name ?? "User"}
-            </span>
-          </div>
+          ) : user && navReady && (
+            <div className="flex items-center gap-2 px-2 mb-2">
+              <div className="w-6 h-6 rounded-full bg-sidebar-primary/30 flex items-center justify-center text-xs font-bold text-sidebar-primary-foreground">
+                {user.profile.name?.[0]?.toUpperCase() ?? "U"}
+              </div>
+              <span className="text-xs text-sidebar-foreground/70 truncate flex-1">
+                {user.profile.email ?? user.profile.name ?? "User"}
+              </span>
+            </div>
+          )}
           <button
             onClick={() => removeUser()}
             className="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 w-full transition-colors cursor-pointer"
